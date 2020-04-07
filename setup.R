@@ -112,7 +112,8 @@ prepare_data <- function(data){
            PIAT.score, 
            PIAT.error, 
            RAT.score, 
-           RAT.error)
+           RAT.error, 
+           music_perception)
   assign("master", master, globalenv())
   assign("master_wide", master_wide, globalenv())
 
