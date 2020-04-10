@@ -4,6 +4,7 @@ library(tidyverse)
 library(broom)
 library(broom.mixed)
 
+#'Helper frunction that creates a version of data fraem  @data which each row repeated @n times
 rep_rows_dfr <- function(data, n){
   map_dfr(1:nrow(data), function(i){
     map_dfr(1:n, function(x){
@@ -12,6 +13,8 @@ rep_rows_dfr <- function(data, n){
   })  
 }
 
+#' Helper function to bind data frames with different numbers of rows column-wise 
+#' Needed to multiverse outputs
 bind_cols_m <- function(tib1, tib2){
   if(nrow(tib2) < nrow(tib1)){
     tmp <- tib1
@@ -29,11 +32,9 @@ bind_cols_m <- function(tib1, tib2){
   bind_cols(tib1, tib2)
 
 }
-setup_workspace <- function(){
-  assign("pw", readRDS("paperthon_data_wide.RDS"), globalenv())
-  assign("pl", readRDS("paperthon_data_long.RDS"), globalenv())
-} 
 
+#'Creates a filtered version of the original data for multiverse analysis
+#'
 compile_data <- function(
   raw_data, # input data goes here
   include_only_best_shot, 
@@ -49,6 +50,9 @@ compile_data <- function(
   df
 }
 
+#'The actual analysis, here a sinple linear mixed regression of music perception over age with random
+#'intercepts per participant
+#'
 timelime_analysis <- function(data){
   mod1 <- lmer(music_perception ~ age + (1|p_id), data = data, REML = TRUE)
   #browser()
@@ -58,6 +62,9 @@ timelime_analysis <- function(data){
     n_data = tibble(n_data = nrow(data))
   )
 }
+#'Applies a certain filter @compilation_data 
+#'and runs whatever function @fun you like of the different data views of @raw_data
+#'
 run_function_with_compilation_parameters <- function(
   fun,
   raw_data, 
@@ -68,7 +75,9 @@ run_function_with_compilation_parameters <- function(
   compiled_data = do.call(compile_data, args)
   fun(compiled_data)
 }
-
+#'Run funciotn @fun over all different combination of @possible_compilation_parameters
+#'on @raw_data
+#'
 run_function_with_all_compilation_parameters <- function(
   fun,
   raw_data,
@@ -82,12 +91,21 @@ run_function_with_all_compilation_parameters <- function(
   ))
   df
 }
+#'Helper funtion to add an ID for a specific multiverse parameter setting to @data, 
+#'helpful for further analysis of multiverse results
+#'
 add_multi_id <- function(data){
   data %>% mutate(multi_id = sprintf("%d%d%d%d",
                                      include_only_best_shot, 
                                      exclude_hearing_impaired, 
                                      remove_2015, only_standard_gender))  
 }
+#'Appliation of timeline_analyis on the @data using a multiverse of
+#'eight possible parameter combination (best_shot T/F, hearing_impairment.binary T/F,
+#'with or withou 2015 and using standardized (non-p.c.) gender). 
+#'
+#'Note: This is only an demostration example!
+#'
 multiverse_output <- function(data){
   ret <- 
     run_function_with_all_compilation_parameters(
