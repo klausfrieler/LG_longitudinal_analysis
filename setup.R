@@ -136,7 +136,8 @@ load_data <- function() {
       function(x) 
         readr::read_csv(x, col_types = get_col_types()), 
       object = "data/compiled/all.csv",
-      bucket = "longgold.gold-msi.org")
+      bucket = "longgold.gold-msi.org",
+      opts = list(region = "eu-west-1"))
   #browser()
   messagef("...read %d lines of data\n", nrow(data))
   data[is.na(data$status) & !is.na(data$age),]$status <- "full"
