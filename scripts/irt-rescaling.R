@@ -92,51 +92,6 @@ eval_par <- function(par, df, plot = FALSE) {
   cost
 }
 
-construct_scale <- function(df_all) {
-  # Original relationship between score and sem
-  plot(df_all$raw_score, df_all$raw_sem,
-       xlab = "Raw score",
-       ylab = "Raw SEM")
-  
-  # Summarised relationship beween score and sem
-  mod <- gam(raw_sem ~ s(raw_score), data = df_all)
-  plot(mod)
-  
-  df <- tibble(
-    raw_score = seq(from = -4, to = 4, by = 0.25),
-    raw_sem = predict(mod, newdata = tibble(raw_score))
-  )
-  plot(df, type = "l", 
-       xlab = "Raw score",
-       ylab = "Raw SEM")
-  
-  initial_par <- seq(from = 1, to = 2, length.out = NBASIS)
-  res <- optim(initial_par, eval_par, df = df, method = "Nelder-Mead", control = list(maxit = 5e3))
-  par <- norm_par(res$par)
-  eval_par(par, df, plot = T)
-  
-  new_scores <- get_new_scores(df, par)
-  
-  mod_2 <- scam(new_score ~ s(raw_score, bs = "mpi"), data = new_scores)
-  plot(mod_2)
-  
-  shift <- as.numeric(predict(mod_2, newdata = tibble(raw_score = 0)))
-  
-  final_scores <- new_scores %>% 
-    mutate(final_score = as.numeric(predict(mod_2, newdata = new_scores %>% select(raw_score))) - shift)
-  
-  p <- ggplot(final_scores, aes(raw_score, final_score)) +
-    geom_line() + 
-    scale_x_continuous("Raw score") +
-    scale_y_continuous("Final score")
-  print(p)
-  
-  list(
-    stage_1_mod = norm_par(res),
-    stage_2_mod = mod_2,
-    scores = final_scores
-  )
-}
 
 ########################################################
 
@@ -150,9 +105,75 @@ LAMBDA_SQR <- 1e-3
 
 NBASIS <- length(BREAKS) + NORDER - 2L
 
-res <- master %>%
+df_all <- master %>%
   select(raw_score = PIAT.score,
          raw_sem = PIAT.error) %>%
   mutate_all(as.numeric) %>% 
-  na.omit() %>% 
-  construct_scale()
+  na.omit()
+
+get_final_sem <- function(raw_score, raw_sem, final_model) {
+  N <- 1e4
+  raw_samples <- rnorm(N, mean = raw_score, sd = raw_sem)
+  transformed_samples <- predict(final_model, newdata = tibble(raw_score = raw_samples))
+  sd(transformed_samples)
+}
+
+#######
+
+# Original relationship between score and sem
+plot(df_all$raw_score, df_all$raw_sem,
+     xlab = "Raw score",
+     ylab = "Raw SEM")
+
+# Summarised relationship beween score and sem
+mod <- gam(raw_sem ~ s(raw_score), data = df_all)
+plot(mod)
+
+df <- tibble(
+  raw_score = seq(from = -4, to = 4, by = 0.25),
+  raw_sem = predict(mod, newdata = tibble(raw_score))
+)
+plot(df, type = "l", 
+     xlab = "Raw score",
+     ylab = "Raw SEM")
+
+initial_par <- seq(from = 1, to = 2, length.out = NBASIS)
+res <- optim(initial_par, eval_par, df = df, method = "Nelder-Mead", control = list(maxit = 5e3))
+par <- norm_par(res$par)
+eval_par(par, df, plot = T)
+
+new_scores <- get_new_scores(df, par)
+
+mod_2 <- scam(new_score ~ s(raw_score, bs = "mpi"), data = new_scores)
+plot(mod_2)
+
+shift <- as.numeric(predict(mod_2, newdata = tibble(raw_score = 0)))
+
+final_scores <- new_scores %>% 
+  mutate(final_score = as.numeric(predict(mod_2, newdata = new_scores %>% select(raw_score))) - shift,
+         final_sem = map2_dbl(raw_score, raw_sem, get_final_sem, mod_2))
+
+tibble(
+  raw_score = seq(from = -10, to = 10, length.out = 1e2),
+  final_score = predict(mod_2, newdata = tibble(raw_score = raw_score)) - shift
+) %>% 
+  ggplot(aes(raw_score, final_score)) +
+  geom_line()
+
+p <- ggplot(final_scores, aes(raw_score, final_score)) +
+  geom_line() + 
+  scale_x_continuous("Raw score") +
+  scale_y_continuous("Final score")
+print(p)
+
+q <- ggplot(final_scores, aes(raw_score, new_iqr)) + 
+  geom_line() + 
+  scale_x_continuous("Raw score") + 
+  scale_y_continuous("Final SEM", limits = c(0, NA))
+print(q)
+
+# summary <- list(
+#   stage_1_mod = norm_par(res),
+#   stage_2_mod = mod_2,
+#   scores = final_scores
+# )
