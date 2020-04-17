@@ -1,4 +1,5 @@
 source("setup.R")
+setup_workspace()
 
 limiter <- function(x, limits){
   max(min(x, limits[2]), limits[1])
@@ -71,7 +72,7 @@ distribution_plot <- function(data, var, raw_value, group_var = "", title = ""){
   if(is.null(title) || length(title) == 0 || nchar(title) == 0){
     title <- var
   }
-  q <- q + labs(x = "Pearson correlation", title = title)
+  q <- q + labs(x = var, title = title)
  
   q
 }
@@ -82,7 +83,10 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
   messagef("Running correlation bootstrap with %d iterations.", size)
   raw_cor <- data %>% cor_test_wrapper() %>% pull(estimate)
   boot_cor <- bootstrapper(data, FUN = cor_test_wrapper, c("MIQ", "RAT"), size = size)
-  cor_plot <- distribution_plot(boot_cor, var = "estimate", raw_value = raw_cor)
+  cor_plot <- distribution_plot(boot_cor, 
+                                var = "estimate", 
+                                raw_value = raw_cor, 
+                                title = "Pearson correlation coefficient MIQ ~ RAT")
   messagef("Mean correlation with %d bootstrap samples: %.3f (+/- %.3f), raw correlation: %.3f", size, mean(boot_cor$estimate, na.rm = T), sd(boot_cor$estimate, na.rm = T)/sqrt(size),raw_cor)
   print(cor_plot)
   invisible(readline(prompt="Press [enter] to continue"))
@@ -92,7 +96,10 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
   
   raw_lm <- data %>% lm_wrapper(broom_FUN = broom::glance)
   boot_lm <- bootstrapper(data, FUN = lm_wrapper, c("MIQ", "RAT"), size = size, broom_FUN = broom::glance)
-  r_adj_plot <- distribution_plot(boot_lm, var = "adj.r.squared", raw_value = raw_lm$adj.r.squared)
+  r_adj_plot <- distribution_plot(boot_lm, 
+                                  var = "adj.r.squared", 
+                                  raw_value = raw_lm$adj.r.squared, 
+                                  title = "adj. R^2: academic.overall ~ MIQ + RAT")
   messagef("Mean Adj. r^2 with %d bootstrap samples: %.3f (+/- %.3f), raw adj. R^2: %.3f", size, mean(boot_lm$adj.r.squared, na.rm = T), sd(boot_lm$adj.r.squared, na.rm = T)/sqrt(size), raw_lm$adj.r.squared)
   print(r_adj_plot)
   invisible(readline(prompt="Press [enter] to continue"))
@@ -120,7 +127,8 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
   
   beta_RAT_plot <- distribution_plot(boot_lm %>% filter(term == "RAT.score"), 
                                      var = "estimate", 
-                                     raw_value = raw_beta_RAT, title = "beta_RAT")
+                                     raw_value = raw_beta_RAT, 
+                                     title = "beta_RAT")
   messagef("Mean beta_RAT with %d bootstrap samples: %.3f (+/- %.3f), raw beta_RAT: %.3f", 
            size, 
            mean(boot_lm %>% filter(term == "RAT.score") %>% pull(estimate), 
@@ -131,7 +139,7 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
   invisible(readline(prompt="Press [enter] to continue"))
   
   #3. simple SEM
-  messagef("Running simple (FA)-SEM bootstrap with %d iterations", size)
+  messagef("Running FA-SEM bootstrap with %d iterations", size)
   raw_sem <- data %>% sem_wrapper() 
   raw_betas <- raw_sem %>% 
     filter(lhs == "model_music", op == "=~") %>% 
@@ -143,7 +151,8 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
   sem_beta_plot <- distribution_plot(boot_sem %>% filter(lhs == "model_music", op == "=~"), 
                                      var = "est.std", 
                                      group_var = "rhs",
-                                     raw_value = raw_betas, title = "sem_betas")
+                                     raw_value = raw_betas, 
+                                     title = "Factor loadings model_music ~ MDI + MPT + BAT")
   #browser()
   cmp_values <- bind_cols(
     boot_sem %>% 
@@ -166,3 +175,4 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
        sem_beta_plot = sem_beta_plot) %>% invisible()
   
 }
+demo_bootstrapper(size = 10)
