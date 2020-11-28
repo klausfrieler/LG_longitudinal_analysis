@@ -1,7 +1,7 @@
 #library(brms)
 #library(mice)
 #library(miceadds)
-#library(mclust)
+library(mclust)
 #library(catR)
 #library(Amelia)
 #library(broom)
