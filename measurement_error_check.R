@@ -1,6 +1,16 @@
+#library(brms)
+#library(mice)
+#library(miceadds)
+#library(mclust)
+#library(catR)
+#library(Amelia)
+#library(broom)
+#library(MASS)
+#library(faux)
+#library(broom.mixed)
+#library(simex)
 library(tidyverse)
-library(brms)
-library(mice)
+
 source("setup.R")
 source("scripts/IRT_bootstrapper.R")
 
@@ -461,8 +471,7 @@ test_overimputation <- function(data, m = 5){
 
 
 test_pv_imputation <- function(data, m = 30){
-  library(mice)
-  library(miceadds)
+
   set.seed(666)
   
   #data <- trim_data(data, na.rm = T)
@@ -506,8 +515,7 @@ test_pv_imputation <- function(data, m = 30){
 }
 
 test_pmm_imputation <- function(data, m = 30){
-  require(mice)
-  require(miceadds)
+
   set.seed(666)
   
   messagef("***Calculating plausible value imputation")
