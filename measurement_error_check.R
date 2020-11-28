@@ -10,6 +10,8 @@
 #library(broom.mixed)
 #library(simex)
 library(tidyverse)
+
+#This hack prevents including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
 source("setup.R")
@@ -146,8 +148,25 @@ simulate_with_corr <- function(data, sigma = NULL){
     MASS::mvrnorm(n = nrow(data %>% filter(MHE_class == mhe_class)), mu = means, Sigma = sigma, empirical = T) %>% as_tibble() %>% mutate(MHE_class = mhe_class)
   })
 }
-
-simulate_data <- function(data = master_cross, size = nrow(data), seed = NULL, method = "manual"){
+simu_def <- tribble(~sim_id, ~method, ~size, ~MT_error, ~MIQ_items, ~BAT_items, ~with_NA, ~file_prefix,
+                    1,  "mvt", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), T, "simu",
+                    2,  "mvt", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), F, "simu",
+                    3,  "mvt-decor", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), T, "simu",
+                    4,  "mvt-decor", 1, c(.318, .76, .38), c(10, 20, 30),c(4, 8, 16), F, "simu"
+                    ) 
+get_simu_def <- function(){
+  methods <- c("mvt", "mvt_decor", "mvt_upcor")
+  MT_errors <- c( .76, .38, .318)
+  MIQ_items <- c(10, 20, 30)
+  BAT_items <- c(4, 8, 16)
+  with_na <- c(F, T)
+  
+}
+simulate_data <- function(data = master_cross, 
+                          size = nrow(data), 
+                          seed = NULL, 
+                          method = "manual", 
+                          with_NA = T){
   if(!is.null(seed)){
     set.seed(seed)
   }
@@ -180,11 +199,14 @@ simulate_data <- function(data = master_cross, size = nrow(data), seed = NULL, m
     MIQ.true_score <- tmp$MIQ.score
     MIQ.theta_sd <- 0
   }
-  else{
+  else if (method == "manual"){
     MT.true_score  <- rnorm(size, mean = mean(data$MT.score, na.rm = T), sd = sd(data$MT.score, na.rm = T))
     MHE.true_score <- sample(data %>% trim_data(na.rm = T) %>% pull(MHE.score), size, replace = T)
     MIQ.true_score <- mean(data$MIQ.score, na.rm = T)  
     MIQ.theta_sd <- sd(data$MIQ.score, na.rm = T)  
+  }
+  else{
+    stop(sprintf("Invalid method: %s", method))
   }
   #browser()
   tictoc::tic()
@@ -225,14 +247,17 @@ simulate_data <- function(data = master_cross, size = nrow(data), seed = NULL, m
   #  limiter(c(min(data$BAT.error, na.rm = T), max(data$BAT.error, na.rm = T)))
   #simul_data$BAT.score <- (BAT.true_score + rnorm(size, 0, simul_data$BAT.error)) %>% limiter(c(-4, 4))
   
-  na_perc <-  map_dfr(all_vars, 
-                      function(v) tibble(var = v, na_perc = na_frac(data[[var]]))) %>% arrange(var)
-  for(sv in score_vars){
-    #browser()
-    perc <- na_perc %>% filter(var == sv) %>% pull(na_perc)
-    na_rows <- sample(1:nrow(simul_data), perc * nrow(simul_data))
-    simul_data[na_rows, sv] <- NA
-    simul_data[na_rows, gsub(".score", ".error", sv, fixed = T)] <- NA
+  if(with_NA){
+    na_perc <-  map_dfr(all_vars, 
+                      function(v) tibble(var = v, na_perc = na_frac(data[[var]]))) %>% 
+      arrange(var)
+    for(sv in score_vars){
+      #browser()
+      perc <- na_perc %>% filter(var == sv) %>% pull(na_perc)
+      na_rows <- sample(1:nrow(simul_data), perc * nrow(simul_data))
+      simul_data[na_rows, sv] <- NA
+      simul_data[na_rows, gsub(".score", ".error", sv, fixed = T)] <- NA
+    }
   }
   simul_data
 }
@@ -539,22 +564,22 @@ test_simex <- function(data){
 }
 
 test_all <- function(data){
-  fit_cutoff <- test_cutoff(data, lm_model, dv_threshold = dv_threshold)
+  #fit_cutoff <- test_cutoff(data, lm_model, dv_threshold = dv_threshold)
   #fit_brms <- test_brms(master_cross)
   #fit_brms <- NULL
   #fit_imp_kf <- test_imputation_KF(data) 
   fit_overimp <- test_overimputation(data, m = 5)
-  fit_pmm_imp <- test_pmm_imputation(master_cross, m = 5)
+  fit_pmm_imp <- test_pmm_imputation(data, m = 5)
   fit_simex <- test_simex(data)
   fit_true <- tibble(term = c("(Intercept)", "MT.score", "MIQ.score", "MHE.score"), 
                      estimate = c(-1.1, .166, .355, 0.016), type = "true")
   pool <- 
     bind_rows(
       #fit_brms, 
-      fit_cutoff, 
-      fit_imp_kf, 
+      #fit_cutoff, 
+      #fit_imp_kf, 
       fit_overimp, 
-      #fit_pv_imp, 
+      fit_pmm_imp, 
       fit_true,
       fit_simex) 
   pool
@@ -576,7 +601,7 @@ get_relative_stats <- function(pool){
 test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method = "mvt"){
   raw <-  
     map_dfr(1:n_simul, function(n){
-      simu <- simulate_data(data, method = method)
+      simu <- simulate_data(data, method = method, with_NA = T)
       simu %>% mutate(iter = n)
   })
   
@@ -602,12 +627,14 @@ test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method 
 }
 test_all_simulations <- function(data, simulations, out_dir = "data/simulations"){
   simu_def <- tribble(~name, ~size, ~method, ~file_name,
-                      "mvt", 30, "mvt", "simu")
+                      "mvt", 1, "mvt", "simu")
+  browser()
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
     tmp <- test_simulations(data = data, n_simul = simu_def[r, ]$size, method = simu_def[r, ]$method)
-    file_name <- file.path(out_dir, sprintf("%s_%s_%d", simu_def[r,]$filename, method, simu_def[r, ]$size))
-    tictoc::toc(funct.toc = )
+    tictoc::toc()
+    file_name <- file.path(out_dir, sprintf("%s_%s_%d.rds", simu_def[r,]$filename, simu_def[r, ]$method, simu_def[r, ]$size))
+    saveRDS(tmp, file_name)
   }
 }
 vary_tertiaries <- function(){
