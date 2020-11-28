@@ -1,7 +1,7 @@
 #library(brms)
 #library(mice)
 #library(miceadds)
-library(mclust)
+#library(mclust)
 #library(catR)
 #library(Amelia)
 #library(broom)
@@ -10,6 +10,7 @@ library(mclust)
 #library(broom.mixed)
 #library(simex)
 library(tidyverse)
+mclustBIC <- mclust::mclustBIC
 
 source("setup.R")
 source("scripts/IRT_bootstrapper.R")
@@ -507,7 +508,7 @@ test_pv_imputation <- function(data, m = 30){
   #fit <- mice::pool(with(imp, lm(eval(lm_model))))
   #lm_model_loc <- as.formula(sprintf("%s~%s", dep_var, pred_secondary))
   fit <- 
-    map(1:m, function(i) {
+    purrr:::map(1:m, function(i) {
       lm(lm_model, data = mice::complete(imp, i))
     }) %>% mice::pool()
   #fit <- fit$pooled %>% filter(term == pred_primary)
@@ -599,7 +600,16 @@ test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method 
     })
   list(raw = raw, pool = pool, stats = stats)
 }
-
+test_all_simulations <- function(data, simulations, out_dir = "data/simulations"){
+  simu_def <- tribble(~name, ~size, ~method, ~file_name,
+                      "mvt", 30, "mvt", "simu")
+  for(r in 1:nrow(simu_def)){
+    tictoc::tic()
+    tmp <- test_simulations(data = data, n_simul = simu_def[r, ]$size, method = simu_def[r, ]$method)
+    file_name <- file.path(out_dir, sprintf("%s_%s_%d", simu_def[r,]$filename, method, simu_def[r, ]$size))
+    tictoc::toc(funct.toc = )
+  }
+}
 vary_tertiaries <- function(){
   orig_tertiary <- pred_tertiary
   tertiaries <- c("CCM", "MHE.general_score", "SES.educational_degree", "GMS.active_engagement")
