@@ -265,9 +265,11 @@ setup_workspace_me <- function(reload_data = T){
       filter(Reduce(`+`, lapply(., is.na)) != ncol(.) - 2) 
 
     master_cross[is.na(master_cross$MT.score), ]$MT.error <- NA
-    assign("master_cross", master_cross, globalenv())
   }
-
+  else{
+    master_cross <- readRDS("data/master_cross.rds")
+  }
+  assign("master_cross", master_cross, globalenv())
 }
 
 trim_data <- function(data, na.rm = T){
