@@ -1,21 +1,25 @@
-#library(brms)
-#library(mice)
-#library(miceadds)
-#library(mclust)
-#library(catR)
-#library(Amelia)
-#library(broom)
-#library(MASS)
-#library(faux)
-#library(broom.mixed)
-#library(simex)
 library(tidyverse)
 
-#This hack prevents including library(mclust), due to bug in mclust
+#This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
 source("setup.R")
-source("scripts/IRT_bootstrapper.R")
+#source("scripts/IRT_bootstrapper.R")
+
+required_packages <- c("aws.s3", "lubridate", 
+                       "brms", "mice", "miceadds", "mclust", 
+                       "catR", "Amelia", "broom", "MASS", 
+                       "faux", "broom.mixed", "simex")
+
+prepare_simulations <- function(){
+  for(n in required_packages){
+    installed <- n %in% installed.packages()
+    messagef("Checking for package %s: %s",n, ifelse(installed, "Installed", "Not installed"))
+  }
+  setup_workspace_me(F)
+  messagef("Running test simulation... bear with me.")
+  tmp <- test_simulations(master_cross, n_simul = 1)
+}
 
 imputed_lm <- function(imputed, model = lm_model, alpha = .05){
   tidied <- 
@@ -30,8 +34,8 @@ imputed_lm <- function(imputed, model = lm_model, alpha = .05){
   qm <- quick_meld(tidied, by_term = T) %>% 
     mutate(df.residual = glanced$df.residual[1], adj.r.squared = mean(glanced$adj.r.squared)) %>% 
     mutate(statistic = estimate / std.error,
-           conf.low = estimate + std.error * qt(alpha/2, df.residual),
-           conf.high = estimate + std.error * qt(1-alpha/2, df.residual),
+           low_ci = estimate + std.error * qt(alpha/2, df.residual),
+           up_ci = estimate + std.error * qt(1-alpha/2, df.residual),
            p.value = 2 * pt(abs(statistic), df.residual, lower.tail = FALSE)) 
   qm
 }
@@ -109,13 +113,9 @@ set_off_diag <- function(mat, off_diag_val = 0){
   res
 }
 
-simulate_with_corr <- function(data, sigma = NULL){
-  data <- mice::mice(data %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm") %>% complete(1)
-  #browser()
-  #data[is.na(data$MHE.score),]$MHE.score <- imp$imp$MHE.score[[1]]
-  MHE <- data$MHE.score
-  MHE_GMM <- mclust::Mclust(log(MHE - min(MHE) + .1) + rnorm(length(MHE), 0, .01), G = 3, na.rm = T)
-  data$MHE_class <- MHE_GMM$classification 
+simulate_with_corr <- function(data, size = nrow(data), sigma = NULL){
+
+  stopifnot("MHE_class" %in% names(data))
   #browser()
   sum_stats <- data %>% 
     group_by(MHE_class) %>% 
@@ -145,8 +145,11 @@ simulate_with_corr <- function(data, sigma = NULL){
         colnames(sigma) <- c("BAT.score", "MIQ.score", "MT.score", "MHE.score")
       }
     }
-    MASS::mvrnorm(n = nrow(data %>% filter(MHE_class == mhe_class)), mu = means, Sigma = sigma, empirical = T) %>% as_tibble() %>% mutate(MHE_class = mhe_class)
-  })
+
+    n_effective <- round(size * nrow(data %>% filter(MHE_class == mhe_class))/nrow(data))
+    MASS::mvrnorm(n = n_effective, mu = means, Sigma = sigma, empirical = T) %>% 
+      as_tibble() %>% mutate(MHE_class = mhe_class)
+  }) %>% `[`(1:size, )
 }
 simu_def <- tribble(~sim_id, ~method, ~size, ~MT_error, ~MIQ_items, ~BAT_items, ~with_NA, ~file_prefix,
                     1,  "mvt", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), T, "simu",
@@ -165,13 +168,15 @@ get_simu_def <- function(){
 simulate_data <- function(data = master_cross, 
                           size = nrow(data), 
                           seed = NULL, 
-                          method = "manual", 
+                          method = "mvt",
+                          coefs = c(beta0 =  -1.1, beta_MT = 0.163, beta_MIQ = 0.355, beta_MHE = 0.016),
+                          MT.error = .318,
+                          num_MIQ_items = 8,
+                          num_BAT_items = 20,
                           with_NA = T){
   if(!is.null(seed)){
     set.seed(seed)
   }
-  #data <- mice::mice(data, m = 1, method = "pmm") %>% complete(1)
-  #data$MT.error <- .318
 
   if(method == "faux"){
     tmp_data <- trim_data(data)
@@ -186,14 +191,14 @@ simulate_data <- function(data = master_cross,
     MIQ.theta_sd <- 0
   }
   else if(method == "mvt"){
-    tmp <- simulate_with_corr(master_cross)
+    tmp <- simulate_with_corr(data, size)
     MT.true_score <- tmp$MT.score
     MHE.true_score <- tmp$MHE.score
     MIQ.true_score <- tmp$MIQ.score
     MIQ.theta_sd <- 0
   }
   else if(method == "mvt-decor"){
-    tmp <- simulate_with_corr(master_cross, sigma = "decor")
+    tmp <- simulate_with_corr(data, size, sigma = "decor")
     MT.true_score <- tmp$MT.score
     MHE.true_score <- tmp$MHE.score
     MIQ.true_score <- tmp$MIQ.score
@@ -216,13 +221,13 @@ simulate_data <- function(data = master_cross,
                                 size = size, 
                                 theta_mean = MIQ.true_score, 
                                 theta_sd = MIQ.theta_sd, 
-                                num_items = 8) 
+                                num_items = num_MIQ_items) 
 
   tictoc::toc()
-  MT.error <- .318
+
   MT.score <- (MT.true_score + rnorm(size, 0, MT.error))  %>% limiter(c(1, 7))
   
-  BAT.true_score <- -1.1 + 0.163 * MT.true_score + 0.355 * miq_simul$MIQ.score + 0.016 * MHE.true_score
+  BAT.true_score <- coefs["beta0"] + coefs["beta_MT"] * MT.true_score + coefs["beta_MIQ"] * miq_simul$MIQ.score + coefs["beta_MHE"] * MHE.true_score
   #fit_BAT <- lm(I(1/BAT.error) ~ (BAT.score), data = data) 
   tictoc::tic()
   messagef("Simulating BAT values")
@@ -230,7 +235,7 @@ simulate_data <- function(data = master_cross,
                                 size = size, 
                                 theta_mean = BAT.true_score, 
                                 theta_sd = 0, 
-                                num_items = 20)
+                                num_items = num_BAT_items)
   tictoc::toc()
     
   simul_data <- tibble(p_id = sprintf("S%d", 1:size), 
@@ -287,10 +292,13 @@ setup_models <- function(){
 }
 
 setup_workspace_me <- function(reload_data = T){
+  messagef("Setting up vars...")
   setup_vars()
+  messagef("Setting up models...")  
   setup_models()
   
   if(reload_data){
+    messagef("Reloading and preparing data...")
     setup_workspace()
     master_cross <- get_cross_section_version(master)
     master_cross <- master_cross %>% 
@@ -301,10 +309,19 @@ setup_workspace_me <- function(reload_data = T){
       filter(Reduce(`+`, lapply(., is.na)) != ncol(.) - 2) 
 
     master_cross[is.na(master_cross$MT.score), ]$MT.error <- NA
+    data <- mice::mice(master_cross %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm") %>% complete(1)
+    #browser()
+    #data[is.na(data$MHE.score),]$MHE.score <- imp$imp$MHE.score[[1]]
+    MHE <- data$MHE.score
+    MHE_GMM <- mclust::Mclust(log(MHE - min(MHE) + .1) + rnorm(length(MHE), 0, .01), G = 3, na.rm = T)
+    master_cross$MHE_class <- MHE_GMM$classification 
   }
   else{
+    messagef("Loading data...")
     master_cross <- readRDS("data/master_cross.rds")
   }
+  messagef("Done.")
+  
   assign("master_cross", master_cross, globalenv())
 }
 
@@ -327,10 +344,21 @@ trim_data <- function(data, na.rm = T){
                   all_of(pred_secondary_error), 
                   all_of(pred_tertiary))
 }
+add_confint_tidy <- function(lm_fit, level = .95){
+  tidy <- broom::tidy(lm_fit)
+  cis <- map_dfr(attr(lm_fit$coefficients, "names"), function(x){
+    confint(fit, x, level) %>% 
+      as_tibble() %>% 
+      rename(low_ci = 1, up_ci = 2) %>% 
+      mutate(term = x)
+    })
+  tidy %>% left_join(cis)
+}
 
 lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
   data <- trim_data(data, na.rm = T)
-  #browser()
+
+  fun_name <- deparse(substitute(broom_FUN))
   if(use_simex){
     fit_raw <- lm(lm_model, x = T, data = data)  
     arguments <- list(...)
@@ -347,10 +375,16 @@ lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
       fit <- fit$coefficients$jackknife %>% as.data.frame()
       fit <- rownames_to_column(fit)
       names(fit) <- c("term", "estimate", "std.error", "statistic", "p.value")
+      fit <- fit %>% mutate(low_ci = estimate - 1.96*std.error, up_ci = estimate + 1.96*std.error)
     }
   }
   else{
-    fit <- lm(lm_model, data = data) %>% broom_FUN()
+    if(fun_name == "broom::glance"){
+      fit <- lm(lm_model, data = data) %>% broom_FUN()
+    }
+    else{
+      fit <- lm(lm_model, data = data) %>% add_confint_tidy()
+    }
   }
   fit
 }
@@ -492,7 +526,7 @@ test_overimputation <- function(data, m = 5){
   assign("imputed", imputed, globalenv())
   imputed_lm(imputed, lm_model) %>% 
     mutate(type = "overimputation") %>% 
-    select(term, estimate, std.error, statistic, p.value, type)
+    select(term, estimate, std.error, statistic, p.value, low_ci, up_ci, type)
 }
 
 
@@ -551,9 +585,11 @@ test_pmm_imputation <- function(data, m = 30){
   
   fit <- 
     map(1:m, function(i) {
-      lm(lm_model, data = mice::complete(imp, i))
+      lm(lm_model, data = mice::complete(imp, i)) 
     })
-  summary(fit  %>% mice::pool()) %>% mutate(type = "pmm_imputation")
+  
+  summary(fit  %>% mice::pool()) %>% 
+    mutate(low_ci = estimate - 1.96 * std.error, up_ci = estimate + 1.96 * std.error, type = "pmm_imputation")
 }
 
 test_simex <- function(data){
@@ -572,7 +608,10 @@ test_all <- function(data){
   fit_pmm_imp <- test_pmm_imputation(data, m = 5)
   fit_simex <- test_simex(data)
   fit_true <- tibble(term = c("(Intercept)", "MT.score", "MIQ.score", "MHE.score"), 
-                     estimate = c(-1.1, .166, .355, 0.016), type = "true")
+                     estimate = c(-1.1, .166, .355, 0.016),
+                     low_ci = c(-1.1, .166, .355, 0.016),
+                     up_ci = c(-1.1, .166, .355, 0.016),
+                     type = "true")
   pool <- 
     bind_rows(
       #fit_brms, 
@@ -588,12 +627,13 @@ test_all <- function(data){
 get_relative_stats <- function(pool){
   pool %>% 
     filter(type == "true") %>% 
-    rename(raw_beta = estimate) %>% 
-    select(term, raw_beta) %>% 
+    rename(true_beta = estimate) %>% 
+    select(term, true_beta) %>% 
     left_join(pool %>% select(term, estimate, type), by = "term") %>% 
-    mutate(rel_to_raw = estimate/raw_beta, 
-           abs_diff = abs(estimate-raw_beta), 
-           rel_diff = (estimate-raw_beta)/raw_beta) %>%  
+    mutate(attenuation = estimate/true_beta, 
+           abs_diff = abs(estimate-true_beta), 
+           abs_rel_diff = abs(estimate-true_beta)/true_beta,
+           rel_diff = (estimate-true_beta)/true_beta) %>%  
     arrange(term, type) %>% select(term, type, everything())
   
 }
@@ -613,14 +653,18 @@ test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method 
   #browser()
   stats <- 
     map_df(1:n_simul, function(n){
-      #browser()
-      get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% 
-        group_by(type) %>% 
-        summarise(mean_abs_diff = mean(abs_diff), 
-                  mean_abs_rel_diff = mean(abs(rel_diff)),
-                  mean_attenuation = mean(rel_to_raw)) %>% 
-        ungroup() %>% 
-        mutate(iter = n)
+      browser()
+      rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
+      sum_stats <- 
+        rel_stats %>% 
+          group_by(type) %>% 
+          summarise(abs_diff = mean(abs_diff), 
+                    rel_diff = mean(rel_diff),
+                    abs_rel_diff = mean(abs_rel_diff),
+                    attenuation = mean(attenuation)) %>% 
+          ungroup() %>% 
+          mutate(iter = n, term = "sum_stats")
+      bind_rows(rel_stats, sum_stats)
       
     })
   list(raw = raw, pool = pool, stats = stats)

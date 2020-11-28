@@ -1,4 +1,4 @@
-library(magrittr)
+library(tidyverse)
 library(aws.s3)
 
 #source("functions/style.R")
