@@ -521,7 +521,7 @@ test_pmm_imputation <- function(data, m = 30){
   messagef("***Calculating plausible value imputation")
   
   #browser()
-  imp <- mice(data %>% select(-all_of(error_vars)), m = m, method = "pmm")
+  imp <- mice::mice(data %>% select(-all_of(error_vars)), m = m, method = "pmm")
   
   fit <- 
     map(1:m, function(i) {
