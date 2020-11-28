@@ -72,6 +72,7 @@ prepare_data <- function(data){
                       PIAT.error, 
                       RAT.score, 
                       RAT.error, 
+                      SES.educational_degree,
                       music_perception))
   #browser()
   master_wide <- master_wide %>% 
@@ -112,7 +113,8 @@ prepare_data <- function(data){
            PIAT.score, 
            PIAT.error, 
            RAT.score, 
-           RAT.error, 
+           RAT.error,
+           SES.educational_degree,
            music_perception)
   assign("master", master, globalenv())
   assign("master_wide", master_wide, globalenv())
@@ -179,4 +181,11 @@ get_col_types <- function() {
   do.call(readr::cols, l)
 }
 
+get_cross_section_version <- function(data){
+  data %>% 
+    group_by(p_id) %>% 
+    mutate(latest = test_wave == max(test_wave)) %>% 
+    ungroup() %>% 
+    filter(latest)   
+}
 

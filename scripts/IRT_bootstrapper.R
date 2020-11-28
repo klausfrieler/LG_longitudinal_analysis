@@ -1,8 +1,11 @@
 source("setup.R")
-setup_workspace()
+#setup_workspace()
 
 limiter <- function(x, limits){
-  max(min(x, limits[2]), limits[1])
+  if(is.null(limits) || length(limits) != 2){
+    return(x)
+  }
+  pmax(pmin(x, limits[2]), limits[1])
 }
 
 sem_wrapper <- function(data, ...){
@@ -19,11 +22,28 @@ lm_wrapper <- function(data, broom_FUN =  broom::glance, ...){
 cor_test_wrapper <- function(data){
   cor.test( ~ MIQ.score + RAT.score, data = data) %>% broom::tidy()
 }
+stat_desc_wrapper <- function(var, FUN.stat = "mean", ...){
+  function(data){
+    #browser()
+    stat_name <- sprintf("%s_%s", FUN.stat, var)
+    tibble(!!sym(stat_name) := eval(parse(text = FUN.stat))(data %>% pull(!!sym(var)), ...))      
+    
+  }
+}
 
-bootstrapper <- function(data, FUN, vars, size = 100, limits = c(-4,4), ...){
-  score_vars <- sprintf("%s.score", vars)
-  error_vars <- sprintf("%s.error", vars)
-  
+id_wrapper <- function(var){
+  function(data){
+    data %>% select(!!sym(var))
+  }
+}  
+bootstrapper <- function(data, FUN, vars = NULL, score_vars = NULL, error_vars = NULL, size = 100, limits = c(-4,4), ...){
+  if(!is.null(vars)){
+    score_vars <- sprintf("%s.score", vars)
+    error_vars <- sprintf("%s.error", vars)
+  }
+  else{
+    stopifnot(!is.null(score_vars) & !is.null(error_vars))
+  }
   var_pool <- 
     map(1:length(score_vars), function(i){
     list(scores = data %>% pull(score_vars[i]), errors = data %>% pull(error_vars[i]))
@@ -89,6 +109,7 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
                                 title = "Pearson correlation coefficient MIQ ~ RAT")
   messagef("Mean correlation with %d bootstrap samples: %.3f (+/- %.3f), raw correlation: %.3f", size, mean(boot_cor$estimate, na.rm = T), sd(boot_cor$estimate, na.rm = T)/sqrt(size),raw_cor)
   print(cor_plot)
+  return()
   invisible(readline(prompt="Press [enter] to continue"))
   #2. Simple linear regression
   #2.1 R^2
@@ -175,4 +196,4 @@ demo_bootstrapper <- function(data = master %>% filter(test_year == 2019), size 
        sem_beta_plot = sem_beta_plot) %>% invisible()
   
 }
-demo_bootstrapper(size = 10)
+#demo_bootstrapper(size = 100)
