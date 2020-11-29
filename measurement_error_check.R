@@ -653,7 +653,7 @@ test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method 
   #browser()
   stats <- 
     map_df(1:n_simul, function(n){
-      browser()
+      #browser()
       rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
       sum_stats <- 
         rel_stats %>% 
