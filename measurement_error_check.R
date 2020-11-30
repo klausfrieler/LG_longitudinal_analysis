@@ -364,7 +364,7 @@ setup_workspace_me <- function(reload_data = T){
       filter(Reduce(`+`, lapply(., is.na)) != ncol(.) - 2) 
 
     master_cross[is.na(master_cross$MT.score), ]$MT.error <- NA
-    data <- mice::mice(master_cross %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm") %>% complete(1)
+    data <- mice::mice(master_cross %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm", printFlag = F) %>% complete(1)
     #browser()
     #data[is.na(data$MHE.score),]$MHE.score <- imp$imp$MHE.score[[1]]
     MHE <- data$MHE.score
@@ -710,21 +710,23 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
     simu_params <- get_simu_def()[1,]
   }
   #browser()
+  bar <- paste(rep("-", 30), collapse ="")
   raw <-  
     map_dfr(1:n_simul, function(n){
+      messagef("%s\nSimulating data set #%d/%d\n%s", bar, n, n_simul, bar)
       simu <- simulate_data(data, simu_params = simu_params)
       simu %>% mutate(iter = n)
   })
   
   pool <- 
     map_dfr(1:n_simul, function(n){
-      #browser()
+      messagef("%s\nTesting data set #%d/%d\n%s", bar, n,  n_simul, bar)
       test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
   #browser()
   stats <- 
     map_df(1:n_simul, function(n){
-      #browser()
+      messagef("%s\nCollecting stats for set #%d/%d\n%s", bar, n, n_simul, bar)
       rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
       sum_stats <- 
         rel_stats %>% 
@@ -741,7 +743,7 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
   list(raw = raw, pool = pool, stats = stats, params = simu_params %>% mutate(n_simul = n_simul, imp_m = imp_m), version = version)
 }
 
-test_all_simulations <- function(data, n_simul, imp_m = 5, simu_def = NULL, out_dir = "data/simulations"){
+test_all_simulations <- function(data, n_simul, imp_m = 5, simu_def = NULL, label = "simu", out_dir = "data/simulations"){
   if(is.null(simu_def)){
     simu_def <- get_simu_def()[1,]
   }
@@ -765,7 +767,7 @@ test_all_simulations <- function(data, n_simul, imp_m = 5, simu_def = NULL, out_
   pool <- map_dfr(ret, function(x) x$pool %>% bind_cols(x$params) %>% mutate(version = version))
   stats <- map_dfr(ret, function(x) x$stats %>% bind_cols(x$params) %>% mutate(version = version))
   simu_data = list(pool = pool, stats = stats)
-  save(simu_data, file = file.path(out_dir, sprintf("simu_%s.rda", version)))  
+  save(simu_data, file = file.path(out_dir, sprintf("%s_%s.rda", label, version)))  
 }
 
 vary_tertiaries <- function(){
