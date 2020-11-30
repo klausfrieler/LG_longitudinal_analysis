@@ -1,5 +1,7 @@
 library(tidyverse)
 
+version <- "0.1.0"
+
 #This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
@@ -66,6 +68,11 @@ simul_catr_error <- function(item_bank_file = "data/BAT_item_bank.csv",
                              num_items = 8,
                              seed = 666
                              ){
+  if(num_items <= 0){
+    return(tibble(iter = 1:size, !!sym(sprintf("%s.score", name)) := theta_mean, 
+                  !!sym(sprintf("%s.error", name)) := rnorm(size, 0, .001)))
+    
+  }
   set.seed(seed)
   alpha <- 0.05
   item_bank <- read.csv(item_bank_file, sep = ",")
@@ -105,15 +112,25 @@ set_off_diag <- function(mat, off_diag_val = 0){
   if(!is.matrix(mat) || dim(mat)[1] != dim(mat)[2]){
     stop("*mat* must be quadratic matrix")
   }
-  d <- dim(mat)[1]
+  d <- dim(mat)[1L]
   res <- matrix(rep(off_diag_val, d^2), nrow = d)
-  res[seq(0, d-1)*4 + 1:d] <- diag(mat)
+  res[cbind(1L:d, 1L:d)] <- diag(mat)
   rownames(res) <- rownames(mat)
   colnames(res) <- colnames(mat)
   res
 }
 
-simulate_with_corr <- function(data, size = nrow(data), sigma = NULL){
+mult_diag <- function(mat, lambda = 0){
+  if(!is.matrix(mat) || dim(mat)[1] != dim(mat)[2]){
+    stop("*mat* must be quadratic matrix")
+  }
+  d <- dim(mat)[1]
+  res <- mat
+  res[cbind(1L:d, 1L:d)] <- lambda * diag(mat)
+  res
+}
+
+simulate_with_corr <- function(data, size = nrow(data), sigma = NULL, var_scale = 1.0){
 
   stopifnot("MHE_class" %in% names(data))
   #browser()
@@ -123,7 +140,7 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL){
                  c(mean = mean,sd = sd), na.rm = T)
   
   map_dfr(unique(data$MHE_class), function(mhe_class){
-    #browser()
+
     tmp <- sum_stats %>% filter(MHE_class == mhe_class)
     means <- c(tmp %>% pull(BAT.score_mean), 
                tmp %>% pull(MIQ.score_mean), 
@@ -133,17 +150,34 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL){
       sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
                      select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
     }
-    else {
-      if(is.character(sigma) && sigma == "decor"){
+    else  if(is.character(sigma)) {
+      if(sigma == "decor"){
         sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
                        select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
-        browser()
         sigma <- set_off_diag(sigma, off_diag_val = 0)
       }
-      else{
+      else if (sigma == "upcor"){
+        sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
+                       select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
+        sigma <- mult_diag(sigma, var_scale)
+        if(rowSums(sigma)["MHE.score"] != 0){
+          cov_test <- sigma %>% cov2cor()
+        }
+        else{
+          cov_test <- sigma[1:3, 1:3] %>% cov2cor()
+        }
+        
+        if(cov_test %>% is.na() %>% any() || (cov_test %>% (function(x) x > 1) %>% any())){
+          stop(sprintf("Covariance matrix ill conditioned for scale factor %.3f", var_scale ))
+        }
+      }
+    }
+    else if(is.numeric(sigma)) {
         row.names(sigma) <- c("BAT.score", "MIQ.score", "MT.score", "MHE.score")
         colnames(sigma) <- c("BAT.score", "MIQ.score", "MT.score", "MHE.score")
       }
+    else{
+      stop("Sigma must be NULL, character or matrix")
     }
 
     n_effective <- round(size * nrow(data %>% filter(MHE_class == mhe_class))/nrow(data))
@@ -151,20 +185,29 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL){
       as_tibble() %>% mutate(MHE_class = mhe_class)
   }) %>% `[`(1:size, )
 }
-simu_def <- tribble(~sim_id, ~method, ~size, ~MT_error, ~MIQ_items, ~BAT_items, ~with_NA, ~file_prefix,
-                    1,  "mvt", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), T, "simu",
-                    2,  "mvt", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), F, "simu",
-                    3,  "mvt-decor", 1, c(.318, .76, .38), c(10, 20, 30), c(4, 8, 16), T, "simu",
-                    4,  "mvt-decor", 1, c(.318, .76, .38), c(10, 20, 30),c(4, 8, 16), F, "simu"
-                    ) 
+
+
+cross_add_col <- function(df, col, col_name = NULL){
+  if(is.null(col_name)){
+    col_name <- deparse(substitute(col))
+  }
+  map_dfr(col, function(x){
+    df %>% mutate(!!sym(col_name) := !!x)
+  })
+}
+
 get_simu_def <- function(){
-  methods <- c("mvt", "mvt_decor", "mvt_upcor")
-  MT_errors <- c( .76, .38, .318)
+  method <- c("mvt", "mvt-decor", "mvt-upcor")
+  MT.errors <- c(.76, .38, .318)
   MIQ_items <- c(10, 20, 30)
   BAT_items <- c(4, 8, 16)
   with_na <- c(F, T)
-  
+  size <- c(250, 500, 1000, 2000, 4000, 8000)
+  tmp <- tibble(MT.error = MT.errors, num_MIQ_items = MIQ_items, num_BAT_items = BAT_items, 
+                error_level = c("large", "medium", "small"), filename = "simu")
+  cross_add_col(tmp, method) %>% cross_add_col(with_na) %>% cross_add_col(size)
 }
+
 simulate_data <- function(data = master_cross, 
                           size = nrow(data), 
                           seed = NULL, 
@@ -173,7 +216,12 @@ simulate_data <- function(data = master_cross,
                           MT.error = .318,
                           num_MIQ_items = 8,
                           num_BAT_items = 20,
-                          with_NA = T){
+                          with_na = T, 
+                          simu_params = NULL){
+  #browser()
+  if(!is.null(simu_params)){
+    list2env(simu_params, environment())
+  }
   if(!is.null(seed)){
     set.seed(seed)
   }
@@ -199,6 +247,13 @@ simulate_data <- function(data = master_cross,
   }
   else if(method == "mvt-decor"){
     tmp <- simulate_with_corr(data, size, sigma = "decor")
+    MT.true_score <- tmp$MT.score
+    MHE.true_score <- tmp$MHE.score
+    MIQ.true_score <- tmp$MIQ.score
+    MIQ.theta_sd <- 0
+  }
+  else if(method == "mvt-upcor"){
+    tmp <- simulate_with_corr(data, size, sigma = "upcor", var_scale = .75)
     MT.true_score <- tmp$MT.score
     MHE.true_score <- tmp$MHE.score
     MIQ.true_score <- tmp$MIQ.score
@@ -237,7 +292,7 @@ simulate_data <- function(data = master_cross,
                                 theta_sd = 0, 
                                 num_items = num_BAT_items)
   tictoc::toc()
-    
+  
   simul_data <- tibble(p_id = sprintf("S%d", 1:size), 
                   BAT.score = bat_simul$BAT.score,
                   BAT.true_score = BAT.true_score,
@@ -252,7 +307,7 @@ simulate_data <- function(data = master_cross,
   #  limiter(c(min(data$BAT.error, na.rm = T), max(data$BAT.error, na.rm = T)))
   #simul_data$BAT.score <- (BAT.true_score + rnorm(size, 0, simul_data$BAT.error)) %>% limiter(c(-4, 4))
   
-  if(with_NA){
+  if(with_na){
     na_perc <-  map_dfr(all_vars, 
                       function(v) tibble(var = v, na_perc = na_frac(data[[var]]))) %>% 
       arrange(var)
@@ -347,7 +402,7 @@ trim_data <- function(data, na.rm = T){
 add_confint_tidy <- function(lm_fit, level = .95){
   tidy <- broom::tidy(lm_fit)
   cis <- map_dfr(attr(lm_fit$coefficients, "names"), function(x){
-    confint(fit, x, level) %>% 
+    confint(lm_fit, x, level) %>% 
       as_tibble() %>% 
       rename(low_ci = 1, up_ci = 2) %>% 
       mutate(term = x)
@@ -514,13 +569,24 @@ test_overimputation <- function(data, m = 5){
                                     select(x = all_of(iv), y = all_of(iv_error))))
     
   }
-  
+  #browser()
   #data <- data %>% select(-dep_var)
+  id_vars <- c("p_id", "MT.error")
+  if(sd(data$BAT.error) <= 0.01){
+    id_vars <- c(id_vars, "BAT.error")
+    
+  }
+  if(sd(data$MIQ.error) <=   0.01){
+    id_vars <- c(id_vars, "MIQ.error")
+    
+  }
   imputed <- Amelia::amelia(data %>% as.data.frame(),
                     m = m,
-                    idvars = c("p_id", "MT.error"), 
+                    idvars = id_vars, 
                     overimp = as.matrix(overimp_mat),
-                    priors = as.matrix(priors)
+                    priors = as.matrix(priors), 
+                    p2s = 0,
+                    ncpus = 8,
                     )
   #browser()
   assign("imputed", imputed, globalenv())
@@ -555,12 +621,13 @@ test_pv_imputation <- function(data, m = 30){
   method[pred_primary] <- "plausible.values"
   method[pred_secondary] <- "plausible.values"
   
-  #browser()
+  browser()
   imp <- mice::mice(data, 
                     maxit = 1, 
                     m = m, 
                     allow.na = TRUE, 
                     method = method, 
+                    printFlag = FALSE,
                     scale.values = params)
 
   
@@ -581,7 +648,7 @@ test_pmm_imputation <- function(data, m = 30){
   messagef("***Calculating plausible value imputation")
   
   #browser()
-  imp <- mice::mice(data %>% select(-all_of(error_vars)), m = m, method = "pmm")
+  imp <- mice::mice(data %>% select(-all_of(error_vars)), m = m, printFlag = F, method = "pmm")
   
   fit <- 
     map(1:m, function(i) {
@@ -599,13 +666,13 @@ test_simex <- function(data){
 
 }
 
-test_all <- function(data){
+test_all <- function(data, m = 5){
   #fit_cutoff <- test_cutoff(data, lm_model, dv_threshold = dv_threshold)
   #fit_brms <- test_brms(master_cross)
   #fit_brms <- NULL
   #fit_imp_kf <- test_imputation_KF(data) 
-  fit_overimp <- test_overimputation(data, m = 5)
-  fit_pmm_imp <- test_pmm_imputation(data, m = 5)
+  fit_overimp <- test_overimputation(data, m = m)
+  fit_pmm_imp <- test_pmm_imputation(data, m = m)
   fit_simex <- test_simex(data)
   fit_true <- tibble(term = c("(Intercept)", "MT.score", "MIQ.score", "MHE.score"), 
                      estimate = c(-1.1, .166, .355, 0.016),
@@ -617,9 +684,9 @@ test_all <- function(data){
       #fit_brms, 
       #fit_cutoff, 
       #fit_imp_kf, 
+      fit_true,
       fit_overimp, 
       fit_pmm_imp, 
-      fit_true,
       fit_simex) 
   pool
 }
@@ -638,17 +705,21 @@ get_relative_stats <- function(pool){
   
 }
 
-test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method = "mvt"){
+test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
+  if(is.null(simu_params)){
+    simu_params <- get_simu_def()[1,]
+  }
+  #browser()
   raw <-  
     map_dfr(1:n_simul, function(n){
-      simu <- simulate_data(data, method = method, with_NA = T)
+      simu <- simulate_data(data, simu_params = simu_params)
       simu %>% mutate(iter = n)
   })
   
   pool <- 
     map_dfr(1:n_simul, function(n){
       #browser()
-      test_all(raw %>% filter(iter == n) %>% select(-iter)) %>% mutate(iter = n)
+      test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
   #browser()
   stats <- 
@@ -667,20 +738,36 @@ test_simulations <- function(data, data_size = nrow(data), n_simul = 30, method 
       bind_rows(rel_stats, sum_stats)
       
     })
-  list(raw = raw, pool = pool, stats = stats)
+  list(raw = raw, pool = pool, stats = stats, params = simu_params %>% mutate(n_simul = n_simul, imp_m = imp_m), version = version)
 }
-test_all_simulations <- function(data, simulations, out_dir = "data/simulations"){
-  simu_def <- tribble(~name, ~size, ~method, ~file_name,
-                      "mvt", 1, "mvt", "simu")
-  browser()
+
+test_all_simulations <- function(data, n_simul, imp_m = 5, simu_def = NULL, out_dir = "data/simulations"){
+  if(is.null(simu_def)){
+    simu_def <- get_simu_def()[1,]
+  }
+  ret <- list()
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
-    tmp <- test_simulations(data = data, n_simul = simu_def[r, ]$size, method = simu_def[r, ]$method)
+    tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ])
     tictoc::toc()
-    file_name <- file.path(out_dir, sprintf("%s_%s_%d.rds", simu_def[r,]$filename, simu_def[r, ]$method, simu_def[r, ]$size))
+    file_name <- file.path(out_dir,
+                           sprintf("%s_meth=%s_sz=%d_el=%s_n=%d_m=%d.rds", 
+                                   simu_def[r,]$filename, 
+                                   simu_def[r, ]$method, 
+                                   simu_def[r, ]$size, 
+                                   simu_def[r, ]$error_level,
+                                   n_simul, 
+                                   imp_m))
     saveRDS(tmp, file_name)
+    ret[[r]] <- tmp
   }
+  #raw <- map_dfr(ret, function(x) x$raw %>% bind_cols(x$params) %>% bind_cols(x$version))
+  pool <- map_dfr(ret, function(x) x$pool %>% bind_cols(x$params) %>% mutate(version = version))
+  stats <- map_dfr(ret, function(x) x$stats %>% bind_cols(x$params) %>% mutate(version = version))
+  simu_data = list(pool = pool, stats = stats)
+  save(simu_data, file = file.path(out_dir, sprintf("simu_%s.rda", version)))  
 }
+
 vary_tertiaries <- function(){
   orig_tertiary <- pred_tertiary
   tertiaries <- c("CCM", "MHE.general_score", "SES.educational_degree", "GMS.active_engagement")
