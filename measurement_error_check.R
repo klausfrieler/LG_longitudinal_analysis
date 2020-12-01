@@ -7,6 +7,7 @@ level(logger) <- "INFO"
 
 version <- "0.2.0"
 bar <- paste(rep("-", 40), collapse ="")
+
 #This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
@@ -641,6 +642,8 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   ret <- list()
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
+    params <- sprintf("%s: %s", simu_def[r,] %>% names(), simu_def[r,] %>% as.list()) %>% paste(collapse ="\n")
+    deco_messagef("Running %s\n%s", label, params)
     tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ], label = label)
     tictoc::toc()
     if(save_data){
