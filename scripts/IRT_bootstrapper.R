@@ -1,13 +1,6 @@
 source("setup.R")
 #setup_workspace()
 
-limiter <- function(x, limits){
-  if(is.null(limits) || length(limits) != 2){
-    return(x)
-  }
-  pmax(pmin(x, limits[2]), limits[1])
-}
-
 sem_wrapper <- function(data, ...){
   model_music <-
     '# measurement model

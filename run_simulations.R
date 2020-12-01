@@ -1,5 +1,5 @@
 library("optparse")
-source("measurement_error_check.R")
+suppressWarnings(source("measurement_error_check.R"))
 
 option_list <- list(
   make_option(c("-s", "--simulations"), type = "character", default = NULL, 
@@ -18,7 +18,7 @@ run_simulations <- function(opt){
     stop("No simulations provided")
   }   
   range_simu <- suppressWarnings(as.integer(strsplit(opt$simulations, ":")[[1]]))
-  if(any(is.na(range_simu)) || length(range_simu) > 2){
+  if(any(is.na(range_simu)) || length(range_simu) != 2){
     stop(sprintf("Invalid range given: '%s'", opt$simulations))  
   }  
   if(!file.exists(opt$outdir)){
@@ -26,8 +26,9 @@ run_simulations <- function(opt){
     
   }
   simu_defs <- get_simu_def()[range_simu[1]:range_simu[2],]
-  label <- sprintf("simu_%d_%d", range_simu[1]:range_simu[2])
-  #test_all_simulations(master_cross, n_simul = opt$n, simu_def = simu_defs, label = label, out_dir = opt$outdir)
+  label <- sprintf("simu_%d_%d", range_simu[1], range_simu[2])
+  setup_workspace_me(F)
+  test_all_simulations(master_cross, n_simul = opt$n, simu_def = simu_defs, label = label, out_dir = opt$outdir)
 }
 
 run_simulations(opt)
