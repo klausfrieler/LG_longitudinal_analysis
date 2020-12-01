@@ -5,7 +5,7 @@ logger <- create.logger()
 logfile(logger) <- "me_simu.log"
 level(logger) <- "INFO"
 
-version <- "0.1.0"
+version <- "0.2.0"
 bar <- paste(rep("-", 40), collapse ="")
 #This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
