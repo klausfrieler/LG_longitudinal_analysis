@@ -663,14 +663,11 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   simu_data = list(pool = pool, stats = stats)
 
   if(save_data){
+    messagef("Saving all summaries to: '%s'", file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))
     save(simu_data, file = file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))  
   }
   else{
     simu_data
   }
+  deco_messagef("Done!")
 }
-
-
-
-
-
