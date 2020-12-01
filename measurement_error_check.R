@@ -6,7 +6,7 @@ logfile(logger) <- "me_simu.log"
 level(logger) <- "INFO"
 
 version <- "0.1.0"
-bar <- paste(rep("-", 30), collapse ="")
+bar <- paste(rep("-", 40), collapse ="")
 #This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
@@ -592,7 +592,7 @@ get_relative_stats <- function(pool){
   
 }
 
-test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
+test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL, label = "DEFAULT"){
   if(is.null(simu_params)){
     simu_params <- get_simu_def()[1,]
   }
@@ -600,20 +600,20 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
 
   raw <-  
     map_dfr(1:n_simul, function(n){
-      deco_messagef("Simulating data set #%d/%d",  n, n_simul)
+      deco_messagef("%s: Simulating data set #%d/%d",  label, n, n_simul)
       simu <- simulate_data(data, simu_params = simu_params)
       simu %>% mutate(iter = n)
   })
   
   pool <- 
     map_dfr(1:n_simul, function(n){
-      deco_messagef("Testing data set #%d/%d", n,  n_simul)
+      deco_messagef("%s: Testing data set #%d/%d", label, n,  n_simul)
       test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
   #browser()
   stats <- 
     map_df(1:n_simul, function(n){
-      deco_messagef("Collecting stats for set #%d/%d", n, n_simul)
+      deco_messagef("%s: Collecting stats for set #%d/%d", label, n, n_simul)
       rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
       sum_stats <- 
         rel_stats %>% 
@@ -641,7 +641,7 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   ret <- list()
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
-    tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ])
+    tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ], label = label)
     tictoc::toc()
     if(save_data){
       file_name <- file.path(out_dir,
@@ -663,11 +663,11 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   simu_data = list(pool = pool, stats = stats)
 
   if(save_data){
-    messagef("Saving all summaries to: '%s'", file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))
+    deco_messagef("%s: Saving all summaries to: '%s'", label, file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))
     save(simu_data, file = file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))  
   }
   else{
     simu_data
   }
-  deco_messagef("Done!")
+  deco_messagef("%s: Done!", label)
 }
