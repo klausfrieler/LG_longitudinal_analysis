@@ -1,11 +1,26 @@
 library(tidyverse)
+library(log4r)
+
+logger <- create.logger()
+logfile(logger) <- "me_simu.log"
+level(logger) <- "INFO"
 
 version <- "0.1.0"
-
+bar <- paste(rep("-", 30), collapse ="")
 #This hack avoids including library(mclust), due to bug in mclust
 mclustBIC <- mclust::mclustBIC
 
 source("setup.R")
+
+messagef <- function(...){
+  message(sprintf(...))
+  log4r::info(logger, sprintf(...))
+}
+deco_messagef <- function(...){
+  messagef(bar)
+  messagef(...)
+  messagef(bar)
+}
 #source("scripts/IRT_bootstrapper.R")
 
 required_packages <- c("aws.s3", "lubridate", 
@@ -444,110 +459,15 @@ lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
   fit
 }
 
-get_model_summary <- function(data, model, type, cutoff = NA, use_weights = F, ...){
-  data <- trim_data(data)
-  if(use_weights){
-    #data$weights <- 1/data[[dep_var_error]]^2
-    data$weights <- 1/sqrt(rowSums(data[, error_vars]^2)) 
-    fit <- lm(model, data = data, weights = I(weights)) 
-  }
-  else{
-    fit <- lm(model, data = data) 
-  }
-  fit %>%  broom::tidy() %>% mutate(type = type)
- 
-}
 
-test_cutoff <- function(data, model, error_var = dep_var_error, dv_threshold = NULL){
-  set.seed(666)
-  #data <- trim_data(data, na.rm = F)
-  messagef("***Calculating cutoffs")
-  
-  l <- data %>% nrow()
-  fit_raw <- get_model_summary(data, model, type = "raw")
-  fit_raw_w <- get_model_summary(data, model, type = "weighted", use_weights = T)
-  if(is.null(dv_threshold)){
-    min_t <- round(min(data[[dep_var_error]], na.rm = T), 1)
-    max_t <- round(max(data[[dep_var_error]], na.rm = T), 1)
-    dv_threshold <- seq(min_t + .01, max_t, .1)
-  }
-  map_dfr(dv_threshold, function(cutoff){
-    messagef("Testing cutoff %.3f", cutoff)
-    #browser()
-    data_cutoff <- data %>%
-      filter(!!sym(error_var) <= cutoff) 
-    l_cutoff <- nrow(data_cutoff)
-    data_sampling <- data %>% sample_frac(l_cutoff/l, replace = F)
-    if(nrow(data %>% filter(!is.na(!!sym(dep_var)))) == 0){
-      return(NULL)
-    }
-    fit_sampling <- get_model_summary(data = data_sampling, model, type = "sampling", cutoff = cutoff) 
-    fit_cutoff <- get_model_summary(data = data_cutoff, model, type = "cutoff", cutoff = cutoff) 
-    bind_rows(fit_sampling, fit_cutoff)
-  }) %>% bind_rows(fit_raw, fit_raw_w)
-}
 
-test_brms <- function(data, iter = 2500){
-  set.seed(666)
-  data <- trim_data(data) 
-  messagef("***Calculating brms models")
-  
-  fit <- brms::brm(lm_model, 
-                   data = data, 
-                   cores = 4, 
-                   iter = iter)
-  fit_se <- brms::brm(brms_model_se, data = data, cores = 4, iter = iter)
-  fit_ses <- brms::brm(brms_model_ses, data = data, cores = 4, iter = iter)
-  #browser()
-  
-  bind_rows(fit %>% broom.mixed::tidyMCMC() %>% mutate(type = "brms_raw"), 
-            fit_se %>% broom.mixed::tidyMCMC() %>% mutate(type = "brms_se"),
-            fit_ses %>% broom.mixed::tidyMCMC() %>% mutate(type = "brms_ses")) %>% 
-    mutate(term = gsub("b_", "", term)) %>% 
-    mutate(term = gsub("Intercept", "(Intercept)", term)) %>% 
-    filter(term != "sigma")
-    
-}
+
 
 se <- function(x,...){
   sd(x, ...)/sqrt(length(x))
 }
 
 
-test_imputation_KF <- function(data, size = 30){
-  set.seed(666)
-  messagef("***Calculating imputation KF")
-  data <- data %>% trim_data(na.rm = F)
-  
-  boot_lm <- bootstrapper(data, FUN = lm_wrapper, 
-                          score_vars = score_vars, 
-                          error_vars = error_vars, 
-                          size = size, 
-                          broom_FUN = broom::tidy)
-
-  boot_lm <- quick_meld(boot_lm, by_term = T)
-
-  raw_lm_simex <- data %>% 
-    lm_wrapper(broom_FUN = broom::tidy, use_simex = T, simex_var = simex_vars,  simex_error = simex_error) 
-  
-  boot_lm_simex <- bootstrapper(data, FUN = lm_wrapper, 
-                          score_vars = dep_var, 
-                          error_vars = dep_var_error, 
-                          use_simex = T, 
-                          simex_var = simex_vars, 
-                          simex_error = simex_error,
-                          size = size, 
-                          broom_FUN = broom::tidy) 
-
-  boot_lm_simex <- quick_meld(boot_lm_simex, by_term = T)
-  
-  bind_rows(boot_lm %>% mutate(type = "boot_lm"), 
-            #raw_lm %>% mutate(type = "raw_lm"),
-            boot_lm_simex %>% mutate(type = "boot_lm_simex"), 
-            raw_lm_simex %>% mutate(type = "raw_lm_simex")
-            ) %>% select(term, everything())
-  
-}
 
 test_overimputation <- function(data, m = 5){
   set.seed(666)
@@ -572,11 +492,11 @@ test_overimputation <- function(data, m = 5){
   #browser()
   #data <- data %>% select(-dep_var)
   id_vars <- c("p_id", "MT.error")
-  if(sd(data$BAT.error) <= 0.01){
+  if(sd(data$BAT.error, na.rm = T) <= 0.01){
     id_vars <- c(id_vars, "BAT.error")
     
   }
-  if(sd(data$MIQ.error) <=   0.01){
+  if(sd(data$MIQ.error, na.rm = T) <=   0.01){
     id_vars <- c(id_vars, "MIQ.error")
     
   }
@@ -596,50 +516,7 @@ test_overimputation <- function(data, m = 5){
 }
 
 
-test_pv_imputation <- function(data, m = 30){
 
-  set.seed(666)
-  
-  #data <- trim_data(data, na.rm = T)
-  #data <- data %>% select(p_id, all_of(dep_var), all_of(pred_secondary))
-  messagef("***Calculating plausible value imputation")
-  
-  data[["p_id"]] <- NULL
-
-  params <- list("dep_var" = list("M" = data[[dep_var]], "SE" = data[[dep_var_error]]),
-                 "pred_primary" = list("M" = data[[pred_primary]], "SE" = data[[pred_primary_error]]),
-                 "pred_secondary" = list("M" = data[[pred_secondary]], "SE" = data[[pred_secondary_error]]))
-  names(params) <- c(dep_var, pred_primary, pred_secondary)
-  data[[dep_var_error]] <- NULL
-  data[[pred_primary_error]] <- NULL
-  data[[pred_secondary_error]] <- NULL
-  cn <- colnames(data)
-  V <- length(cn)
-  method <- rep("", V)
-  names(method) <- cn
-  method[dep_var] <- "plausible.values"
-  method[pred_primary] <- "plausible.values"
-  method[pred_secondary] <- "plausible.values"
-  
-  browser()
-  imp <- mice::mice(data, 
-                    maxit = 1, 
-                    m = m, 
-                    allow.na = TRUE, 
-                    method = method, 
-                    printFlag = FALSE,
-                    scale.values = params)
-
-  
-  #fit <- mice::pool(with(imp, lm(eval(lm_model))))
-  #lm_model_loc <- as.formula(sprintf("%s~%s", dep_var, pred_secondary))
-  fit <- 
-    purrr:::map(1:m, function(i) {
-      lm(lm_model, data = mice::complete(imp, i))
-    }) %>% mice::pool()
-  #fit <- fit$pooled %>% filter(term == pred_primary)
-  summary(fit) %>% mutate(type = "pv_imputation")
-}
 
 test_pmm_imputation <- function(data, m = 30){
 
@@ -665,15 +542,26 @@ test_simex <- function(data){
     mutate(type = "simex_raw")
 
 }
+get_model_summary <- function(data, model, type, cutoff = NA, use_weights = F, ...){
+  data <- trim_data(data)
+  if(use_weights){
+    #data$weights <- 1/data[[dep_var_error]]^2
+    data$weights <- 1/sqrt(rowSums(data[, error_vars]^2)) 
+    fit <- lm(model, data = data, weights = I(weights)) 
+  }
+  else{
+    fit <- lm(model, data = data) 
+  }
+  fit %>%  add_confint_tidy() %>% mutate(type = type)  
+  
+}
 
 test_all <- function(data, m = 5){
-  #fit_cutoff <- test_cutoff(data, lm_model, dv_threshold = dv_threshold)
-  #fit_brms <- test_brms(master_cross)
-  #fit_brms <- NULL
-  #fit_imp_kf <- test_imputation_KF(data) 
   fit_overimp <- test_overimputation(data, m = m)
   fit_pmm_imp <- test_pmm_imputation(data, m = m)
   fit_simex <- test_simex(data)
+  fit_raw <- get_model_summary(data, lm_model, type = "raw")
+  fit_raw_w <- get_model_summary(data, lm_model, type = "weighted", use_weights = T)
   fit_true <- tibble(term = c("(Intercept)", "MT.score", "MIQ.score", "MHE.score"), 
                      estimate = c(-1.1, .166, .355, 0.016),
                      low_ci = c(-1.1, .166, .355, 0.016),
@@ -681,10 +569,9 @@ test_all <- function(data, m = 5){
                      type = "true")
   pool <- 
     bind_rows(
-      #fit_brms, 
-      #fit_cutoff, 
-      #fit_imp_kf, 
       fit_true,
+      fit_raw,
+      fit_raw_w,
       fit_overimp, 
       fit_pmm_imp, 
       fit_simex) 
@@ -710,23 +597,23 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
     simu_params <- get_simu_def()[1,]
   }
   #browser()
-  bar <- paste(rep("-", 30), collapse ="")
+
   raw <-  
     map_dfr(1:n_simul, function(n){
-      messagef("%s\nSimulating data set #%d/%d\n%s", bar, n, n_simul, bar)
+      deco_messagef("Simulating data set #%d/%d",  n, n_simul)
       simu <- simulate_data(data, simu_params = simu_params)
       simu %>% mutate(iter = n)
   })
   
   pool <- 
     map_dfr(1:n_simul, function(n){
-      messagef("%s\nTesting data set #%d/%d\n%s", bar, n,  n_simul, bar)
+      deco_messagef("Testing data set #%d/%d", n,  n_simul)
       test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
   #browser()
   stats <- 
     map_df(1:n_simul, function(n){
-      messagef("%s\nCollecting stats for set #%d/%d\n%s", bar, n, n_simul, bar)
+      deco_messagef("Collecting stats for set #%d/%d", n, n_simul)
       rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
       sum_stats <- 
         rel_stats %>% 
@@ -743,116 +630,47 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL){
   list(raw = raw, pool = pool, stats = stats, params = simu_params %>% mutate(n_simul = n_simul, imp_m = imp_m), version = version)
 }
 
-test_all_simulations <- function(data, n_simul, imp_m = 5, simu_def = NULL, label = "simu", out_dir = "data/simulations"){
+test_all_simulations <- function(data, n_simul, imp_m = 5, 
+                                 simu_def = NULL, 
+                                 label = "simu", 
+                                 out_dir = "data/simulations"){
   if(is.null(simu_def)){
     simu_def <- get_simu_def()[1,]
   }
+  save_data <-  is.character(out_dir) && nchar(out_dir) > 0
   ret <- list()
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
     tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ])
     tictoc::toc()
-    file_name <- file.path(out_dir,
-                           sprintf("%s_meth=%s_sz=%d_el=%s_n=%d_m=%d.rds", 
-                                   simu_def[r,]$filename, 
-                                   simu_def[r, ]$method, 
-                                   simu_def[r, ]$size, 
-                                   simu_def[r, ]$error_level,
-                                   n_simul, 
-                                   imp_m))
-    saveRDS(tmp, file_name)
+    if(save_data){
+      file_name <- file.path(out_dir,
+                             sprintf("%s_meth=%s_sz=%d_el=%s_n=%d_m=%d.rds", 
+                                     simu_def[r,]$filename, 
+                                     simu_def[r, ]$method, 
+                                     simu_def[r, ]$size, 
+                                     simu_def[r, ]$error_level,
+                                     n_simul, 
+                                     imp_m))
+      saveRDS(tmp, file_name)
+      
+    }
     ret[[r]] <- tmp
   }
   #raw <- map_dfr(ret, function(x) x$raw %>% bind_cols(x$params) %>% bind_cols(x$version))
   pool <- map_dfr(ret, function(x) x$pool %>% bind_cols(x$params) %>% mutate(version = version))
   stats <- map_dfr(ret, function(x) x$stats %>% bind_cols(x$params) %>% mutate(version = version))
   simu_data = list(pool = pool, stats = stats)
-  save(simu_data, file = file.path(out_dir, sprintf("%s_%s.rda", label, version)))  
-}
 
-vary_tertiaries <- function(){
-  orig_tertiary <- pred_tertiary
-  tertiaries <- c("CCM", "MHE.general_score", "SES.educational_degree", "GMS.active_engagement")
-  ret <- 
-    map_dfr(tertiaries, function(x){
-      assign("pred_tertiary", x, globalenv())
-      test_all() %>% mutate(model = x)
-      }) %>% 
-    mutate(type = fct_reorder(factor(type), rel_diff, mean))
-  assign("pred_tertiary", orig_tertiary, globalenv())
-  ret
-}
-
-pool_boots_lm <- function(lm_model, dep_var  = "RAT.score"){
-  #browser()
-  pred_pool <- Amelia::mi.meld(lm_model %>% filter(term == dep_var) %>% select(estimate), 
-                               lm_model %>% filter(term == dep_var) %>% select(std.error))
-  intercept_pool <- Amelia::mi.meld(lm_model %>% filter(term == "(Intercept)") %>% select(estimate), 
-                                    lm_model %>% filter(term == "(Intercept)") %>% select(std.error)) 
-  #browser()
-  bind_rows(
-    tibble(term = "(Intercept)", 
-           estimate = intercept_pool$q.mi[1], 
-           std.error = intercept_pool$se.mi[1]),
-    tibble(term = "(RAT.score)", 
-           estimate = pred_pool$q.mi[1], 
-           std.error = pred_pool$se.mi[1]))
-  
-}
-
-test_IRT_kf_imputation <- function(data = master_cross, size = 100){
-  f <- as.formula("BAT.score ~ RAT.score + MIQ.score")
-  raw_lm <- lm(f, data = data) %>% broom::tidy()
-  #browser()
-  brat_wrapper <- function(data){
-    lm(f, data = data) %>% 
-      broom::tidy() 
+  if(save_data){
+    save(simu_data, file = file.path(out_dir, sprintf("%s_%s.rda", label, version)))  
   }
-  lm_brat_pred <- bootstrapper(data, 
-                       FUN = brat_wrapper, 
-                       vars = c("RAT"), 
-                       size = size)
-  
-  brat_pred <- pool_boots_lm(lm_brat_pred) %>% mutate(model = "kf_impute_pred")
+  else{
+    simu_data
+  }
+}
 
-  lm_brat_dep <- bootstrapper(data, 
-                               FUN = brat_wrapper, 
-                               vars = c("BAT"), 
-                               size = size)
-  
-  brat_dep <- pool_boots_lm(lm_brat_dep) %>% mutate(model = "kf_impute_dep")
-  
-  lm_brat <- bootstrapper(data, 
-                              FUN = brat_wrapper, 
-                              vars = c("BAT", "RAT"), 
-                              size = size)
-  
-  brat_pred_dep <- pool_boots_lm(lm_brat) %>% mutate(model = "kf_impute_pred_dep")
-  #browser()
-  bind_rows(raw_lm %>% select(term, estimate, std.error) %>% mutate(model = "raw"),
-            brat_pred,
-            brat_dep,
-            brat_pred_dep)
-  
-}
-test_xyz <- function(batch_size = 100, 
-                     size = 1000, 
-                     m = 0, 
-                     s = 1){
-  map_dfr(1:size, function(j){
-    x <- rnorm(batch_size, 0, s)
-    m <- mean(x)
-    se <- se(x)
-    y <- rnorm(batch_size, m, se)
-    tibble(iter = j, 
-           true_mean = m , 
-           true_sd = s, 
-           batch = batch_size, 
-           size = size, 
-           sim_mean = mean(y), 
-           sim_sd = sd(y),
-           d_mean = true_mean - sim_mean,
-           d_sd = true_sd - sim_sd) 
-  })
-  
-}
+
+
+
+
