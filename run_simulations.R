@@ -23,7 +23,6 @@ run_simulations <- function(opt){
   }  
   if(!file.exists(opt$outdir)){
     stop(sprintf("Output directory does not exist: '%s'", opt$outdir))  
-    
   }
   simu_defs <- get_simu_def()[range_simu[1]:range_simu[2],]
   label <- sprintf("simu_%d_%d", range_simu[1], range_simu[2])

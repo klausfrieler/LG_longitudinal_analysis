@@ -1,11 +1,13 @@
 library(tidyverse)
 library(log4r)
-
+library(tictoc)
 logger <- create.logger()
 logfile(logger) <- "me_simu.log"
 level(logger) <- "INFO"
 
-version <- "0.2.0"
+version <- "0.3.0"
+aws3_dir <- "measurement_error_study"
+
 bar <- paste(rep("-", 40), collapse ="")
 
 #This hack avoids including library(mclust), due to bug in mclust
@@ -17,6 +19,7 @@ messagef <- function(...){
   message(sprintf(...))
   log4r::info(logger, sprintf(...))
 }
+
 deco_messagef <- function(...){
   messagef(bar)
   messagef(...)
@@ -27,7 +30,7 @@ deco_messagef <- function(...){
 required_packages <- c("aws.s3", "lubridate", 
                        "brms", "mice", "miceadds", "mclust", 
                        "catR", "Amelia", "broom", "MASS", 
-                       "faux", "broom.mixed", "simex")
+                       "faux", "broom.mixed", "simex", "digest")
 
 prepare_simulations <- function(){
   for(n in required_packages){
@@ -40,6 +43,7 @@ prepare_simulations <- function(){
 }
 
 imputed_lm <- function(imputed, model = lm_model, alpha = .05){
+  #browser()
   tidied <- 
     map_dfr(1:length(imputed$imputations), function(i){
       lm_wrapper(imputed$imputations[[i]], broom::tidy) %>% mutate(iter = i)
@@ -85,8 +89,12 @@ simul_catr_error <- function(item_bank_file = "data/BAT_item_bank.csv",
                              seed = 666
                              ){
   if(num_items <= 0){
-    return(tibble(iter = 1:size, !!sym(sprintf("%s.score", name)) := theta_mean, 
-                  !!sym(sprintf("%s.error", name)) := rnorm(size, 0, .001)))
+    check <- rnorm(size, theta_mean, theta_sd)
+    if(any(is.na(check))){
+      browser()
+    }
+    return(tibble(iter = 1:size, !!sym(sprintf("%s.score", name)) := rnorm(size, theta_mean, theta_sd), 
+                  !!sym(sprintf("%s.error", name)) := 0))
     
   }
   set.seed(seed)
@@ -153,10 +161,9 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL, var_scale 
   sum_stats <- data %>% 
     group_by(MHE_class) %>% 
     summarise_at(c("BAT.score", "MIQ.score", "MT.score", "MHE.score"), 
-                 c(mean = mean,sd = sd), na.rm = T)
+                 c(mean = mean, sd = sd), na.rm = T)
   
   map_dfr(unique(data$MHE_class), function(mhe_class){
-
     tmp <- sum_stats %>% filter(MHE_class == mhe_class)
     means <- c(tmp %>% pull(BAT.score_mean), 
                tmp %>% pull(MIQ.score_mean), 
@@ -196,7 +203,7 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL, var_scale 
       stop("Sigma must be NULL, character or matrix")
     }
 
-    n_effective <- round(size * nrow(data %>% filter(MHE_class == mhe_class))/nrow(data))
+    n_effective <- round(size * nrow(data %>% filter(MHE_class == mhe_class))/nrow(data)) + 1
     MASS::mvrnorm(n = n_effective, mu = means, Sigma = sigma, empirical = T) %>% 
       as_tibble() %>% mutate(MHE_class = mhe_class)
   }) %>% `[`(1:size, )
@@ -214,14 +221,14 @@ cross_add_col <- function(df, col, col_name = NULL){
 
 get_simu_def <- function(){
   method <- c("mvt", "mvt-decor", "mvt-upcor")
-  MT.errors <- c(.76, .38, .318)
-  MIQ_items <- c(10, 20, 30)
-  BAT_items <- c(4, 8, 16)
+  MT.errors <- c(.76, .38, .318, 0)
+  MIQ_items <- c(10, 20, 30, 0)
+  BAT_items <- c(4, 8, 16, 0)
   with_na <- c(F, T)
-  size <- c(250, 500, 1000, 2000, 4000, 8000)
+  size <- c(250, 500, 1000, 2000, 4000)
   tmp <- tibble(MT.error = MT.errors, num_MIQ_items = MIQ_items, num_BAT_items = BAT_items, 
-                error_level = c("large", "medium", "small"), filename = "simu")
-  cross_add_col(tmp, method) %>% cross_add_col(with_na) %>% cross_add_col(size)
+                error_level = c("large", "medium", "small", "none"), filename = "simu")
+  cross_add_col(tmp, method) %>% cross_add_col(with_na) %>% cross_add_col(size) %>% mutate(id = 1:nrow(.))
 }
 
 simulate_data <- function(data = master_cross, 
@@ -369,6 +376,7 @@ setup_workspace_me <- function(reload_data = T){
   setup_models()
   
   if(reload_data){
+    aws.set_credentials_if_unset()
     messagef("Reloading and preparing data...")
     setup_workspace()
     master_cross <- get_cross_section_version(master)
@@ -427,10 +435,12 @@ add_confint_tidy <- function(lm_fit, level = .95){
 }
 
 lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
+  
   data <- trim_data(data, na.rm = T)
-
   fun_name <- deparse(substitute(broom_FUN))
+  
   if(use_simex){
+    #browser()
     fit_raw <- lm(lm_model, x = T, data = data)  
     arguments <- list(...)
     arg_names <- names(arguments)
@@ -439,9 +449,14 @@ lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
     }   
     simex_var <- arguments[["simex_var"]]
     simex_error <- arguments[["simex_error"]]
-    fit<- simex::simex(fit_raw, measurement.error = data[simex_error], 
+    if(sum(data[simex_error] == 0)){
+      fit <- NULL
+    }
+    else{
+      fit<- simex::simex(fit_raw, measurement.error = data[simex_error], 
                             SIMEXvariable = simex_var, asymptotic = F) 
-    if(!is.null(broom_FUN)){
+    }
+    if(!is.null(fit) && !is.null(broom_FUN)){
       fit  <- summary(fit)
       fit <- fit$coefficients$jackknife %>% as.data.frame()
       fit <- rownames_to_column(fit)
@@ -457,18 +472,9 @@ lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
       fit <- lm(lm_model, data = data) %>% add_confint_tidy()
     }
   }
+  #browser()
   fit
 }
-
-
-
-
-
-se <- function(x,...){
-  sd(x, ...)/sqrt(length(x))
-}
-
-
 
 test_overimputation <- function(data, m = 5){
   set.seed(666)
@@ -476,6 +482,8 @@ test_overimputation <- function(data, m = 5){
   #data <- data %>% sample_n(30)
   messagef("***Calculating overimputation")
   #browser()
+  data <- data %>% select(-ends_with("true_score")) 
+
   overimp_mat <- tibble(row = integer(0), column = integer(0))
   priors <- tibble(row = integer(0), column = integer(0), x = double(0), y = double(0))
   for(iv in score_vars){
@@ -495,19 +503,20 @@ test_overimputation <- function(data, m = 5){
   id_vars <- c("p_id", "MT.error")
   if(sd(data$BAT.error, na.rm = T) <= 0.01){
     id_vars <- c(id_vars, "BAT.error")
-    
   }
   if(sd(data$MIQ.error, na.rm = T) <=   0.01){
     id_vars <- c(id_vars, "MIQ.error")
-    
   }
+  if(sd(priors$y, na.rm = T) <=   0.01){
+    priors$y <- rnorm(nrow(priors), 0, 0.001)
+  }
+  
   imputed <- Amelia::amelia(data %>% as.data.frame(),
                     m = m,
                     idvars = id_vars, 
                     overimp = as.matrix(overimp_mat),
                     priors = as.matrix(priors), 
-                    p2s = 0,
-                    ncpus = 8,
+                    p2s = 0
                     )
   #browser()
   assign("imputed", imputed, globalenv())
@@ -519,13 +528,14 @@ test_overimputation <- function(data, m = 5){
 
 
 
-test_pmm_imputation <- function(data, m = 30){
+test_pmm_imputation <- function(data, m = 5){
 
   set.seed(666)
   
-  messagef("***Calculating plausible value imputation")
+  messagef("***Calculating pmm imputation")
   
   #browser()
+  data <- data %>% select(-ends_with("true_score"))
   imp <- mice::mice(data %>% select(-all_of(error_vars)), m = m, printFlag = F, method = "pmm")
   
   fit <- 
@@ -539,14 +549,17 @@ test_pmm_imputation <- function(data, m = 30){
 
 test_simex <- function(data){
   set.seed(666)
-  lm_wrapper(data, use_simex = T, simex_var = simex_vars, simex_error = simex_error) %>% 
-    mutate(type = "simex_raw")
-
+  fit <- lm_wrapper(data, use_simex = T, simex_var = simex_vars, simex_error = simex_error) 
+  if(!is.null(fit)) fit <- fit %>%  mutate(type = "simex_raw")
+  fit
 }
 get_model_summary <- function(data, model, type, cutoff = NA, use_weights = F, ...){
   data <- trim_data(data)
   if(use_weights){
     #data$weights <- 1/data[[dep_var_error]]^2
+    if(sum(data[, error_vars]) == 0){
+      return(NULL)
+    }
     data$weights <- 1/sqrt(rowSums(data[, error_vars]^2)) 
     fit <- lm(model, data = data, weights = I(weights)) 
   }
@@ -560,6 +573,7 @@ get_model_summary <- function(data, model, type, cutoff = NA, use_weights = F, .
 test_all <- function(data, m = 5){
   fit_overimp <- test_overimputation(data, m = m)
   fit_pmm_imp <- test_pmm_imputation(data, m = m)
+
   fit_simex <- test_simex(data)
   fit_raw <- get_model_summary(data, lm_model, type = "raw")
   fit_raw_w <- get_model_summary(data, lm_model, type = "weighted", use_weights = T)
@@ -578,17 +592,22 @@ test_all <- function(data, m = 5){
       fit_simex) 
   pool
 }
+in_interval <- function(x, low, up){
+  any(is.na(c(low, up))) || ((x>= low) && (x <= up))
+}
 
 get_relative_stats <- function(pool){
   pool %>% 
     filter(type == "true") %>% 
     rename(true_beta = estimate) %>% 
-    select(term, true_beta) %>% 
-    left_join(pool %>% select(term, estimate, type), by = "term") %>% 
+    distinct(term, true_beta) %>% 
+    left_join(pool %>% select(term, estimate, type, low_ci, up_ci), by = "term") %>% 
     mutate(attenuation = estimate/true_beta, 
            abs_diff = abs(estimate-true_beta), 
            abs_rel_diff = abs(estimate-true_beta)/true_beta,
-           rel_diff = (estimate-true_beta)/true_beta) %>%  
+           rel_diff = (estimate-true_beta)/true_beta,
+           in_ci = in_interval(true_beta, low_ci, up_ci),
+           ci_coverage = as.numeric(in_ci)) %>%  
     arrange(term, type) %>% select(term, type, everything())
   
 }
@@ -611,24 +630,31 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL, 
       deco_messagef("%s: Testing data set #%d/%d", label, n,  n_simul)
       test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
-  #browser()
+  browser()
   stats <- 
-    map_df(1:n_simul, function(n){
+    map_dfr(1:n_simul, function(n){
+      #browser()
       deco_messagef("%s: Collecting stats for set #%d/%d", label, n, n_simul)
-      rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% mutate(iter = n)
+      rel_stats <- get_relative_stats(pool %>% filter(iter == n, term != "(Intercept)")) %>% 
+        mutate(iter = n) %>% select(-low_ci, -up_ci)
       sum_stats <- 
         rel_stats %>% 
           group_by(type) %>% 
           summarise(abs_diff = mean(abs_diff), 
                     rel_diff = mean(rel_diff),
                     abs_rel_diff = mean(abs_rel_diff),
-                    attenuation = mean(attenuation)) %>% 
+                    attenuation = mean(attenuation),
+                    ci_coverage = mean(in_ci, na.rm = T)) %>% 
           ungroup() %>% 
           mutate(iter = n, term = "sum_stats")
       bind_rows(rel_stats, sum_stats)
       
     })
-  list(raw = raw, pool = pool, stats = stats, params = simu_params %>% mutate(n_simul = n_simul, imp_m = imp_m), version = version)
+  list(raw = raw, 
+       pool = pool, 
+       stats = stats, 
+       params = simu_params %>% mutate(n_simul = n_simul, imp_m = imp_m), 
+       version = version)
 }
 
 test_all_simulations <- function(data, n_simul, imp_m = 5, 
@@ -643,34 +669,52 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
     params <- sprintf("%s: %s", simu_def[r,] %>% names(), simu_def[r,] %>% as.list()) %>% paste(collapse ="\n")
-    deco_messagef("Running %s\n%s", label, params)
-    tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, simu_params = simu_def[r, ], label = label)
+    deco_messagef("Running %s\n%s", sprintf("%s/%d", label, r), params)
+    tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, 
+                            simu_params = simu_def[r, ], label = sprintf("%s/%d", label, r))
     tictoc::toc()
+    #browser()
     if(save_data){
-      file_name <- file.path(out_dir,
-                             sprintf("%s_meth=%s_sz=%d_el=%s_n=%d_m=%d.rds", 
+      filename <- file.path(out_dir,
+                             sprintf("%s_meth=%s_sz=%d_el=%s_n=%d_m=%d_NA=%d.rds", 
                                      simu_def[r,]$filename, 
                                      simu_def[r, ]$method, 
                                      simu_def[r, ]$size, 
                                      simu_def[r, ]$error_level,
                                      n_simul, 
-                                     imp_m))
-      saveRDS(tmp, file_name)
+                                     imp_m,
+                                     as.integer(simu_def[r, ]$with_na)))
+      saveRDS(tmp, filename)
+      message("Uploading results to AWS...")
+      #browser()
+      aws.set_credentials("kf_aws-credentials.txt")
+      aws.s3::s3saveRDS(tmp, 
+                        object = sprintf("%s/%s", aws3_dir, filename),
+                        bucket = "longgold.gold-msi.org",
+                        opts = list(region = "eu-west-1"))
       
     }
     ret[[r]] <- tmp
   }
+
   #raw <- map_dfr(ret, function(x) x$raw %>% bind_cols(x$params) %>% bind_cols(x$version))
   pool <- map_dfr(ret, function(x) x$pool %>% bind_cols(x$params) %>% mutate(version = version))
   stats <- map_dfr(ret, function(x) x$stats %>% bind_cols(x$params) %>% mutate(version = version))
   simu_data = list(pool = pool, stats = stats)
-
+  deco_messagef("%s: Done!", label)
+  
   if(save_data){
-    deco_messagef("%s: Saving all summaries to: '%s'", label, file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))
-    save(simu_data, file = file.path(out_dir, sprintf("%s_v=%s.rda", label, version)))  
+    filename <- file.path(out_dir, sprintf("%s_v=%s_%s.rds", label, version, digest::sha1(lubridate::now())))
+    deco_messagef("%s: Saving all summaries to: '%s'", label, filename)
+    saveRDS(simu_data, file = filename) 
+    #browser()
+    aws.set_credentials("kf_aws-credentials.txt")
+    aws.s3::s3saveRDS(simu_data, 
+                      object = sprintf("%s/%s", aws3_dir, filename),
+                      bucket = "longgold.gold-msi.org",
+                      opts = list(region = "eu-west-1"))
   }
   else{
     simu_data
   }
-  deco_messagef("%s: Done!", label)
 }

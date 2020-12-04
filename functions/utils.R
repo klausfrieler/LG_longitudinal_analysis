@@ -11,3 +11,7 @@ limiter <- function(x, limits){
   }
   pmax(pmin(x, limits[2]), limits[1])
 }
+
+se <- function(x,...){
+  sd(x, ...)/sqrt(length(x))
+}
