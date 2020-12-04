@@ -431,7 +431,7 @@ add_confint_tidy <- function(lm_fit, level = .95){
       rename(low_ci = 1, up_ci = 2) %>% 
       mutate(term = x)
     })
-  tidy %>% left_join(cis)
+  tidy %>% left_join(cis, by = "term")
 }
 
 lm_wrapper <- function(data, broom_FUN =  broom::tidy, use_simex = F, ...){
@@ -644,7 +644,7 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL, 
                     rel_diff = mean(rel_diff),
                     abs_rel_diff = mean(abs_rel_diff),
                     attenuation = mean(attenuation),
-                    ci_coverage = mean(in_ci, na.rm = T)) %>% 
+                    ci_coverage = mean(in_ci, na.rm = T), .groups = "drop") %>% 
           ungroup() %>% 
           mutate(iter = n, term = "sum_stats")
       bind_rows(rel_stats, sum_stats)
@@ -669,7 +669,7 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
   for(r in 1:nrow(simu_def)){
     tictoc::tic()
     params <- sprintf("%s: %s", simu_def[r,] %>% names(), simu_def[r,] %>% as.list()) %>% paste(collapse ="\n")
-    deco_messagef("Running %s\n%s", sprintf("%s/%d", label, r), params)
+    deco_messagef("Running %s", sprintf("%s/%d", label, r))
     tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, 
                             simu_params = simu_def[r, ], label = sprintf("%s/param_id=%d", label, simu_def[r,]$id))
     tictoc::toc()
