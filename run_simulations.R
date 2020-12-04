@@ -111,5 +111,13 @@ run_simulations <- function(opt){
   messagef("Running %d simulations range %s-%s",  nrow(simu_defs), min(simu_defs$id), max(simu_defs$id))
   test_all_simulations(master_cross, n_simul = opt$n, simu_def = simu_defs, label = label, out_dir = opt$outdir)
 }
+#screen -S simu1 
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 250" -l simu_250
+#screen -S simu1 
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 500" -l simu_500
+#screen -S simu1 
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 1000" -l simu_1000
+#screen -S simu1 
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 2000" -l simu_2000
 
 run_simulations(opt)

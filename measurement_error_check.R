@@ -7,6 +7,7 @@ level(logger) <- "INFO"
 
 version <- "0.4.0"
 aws3_dir <- "measurement_error_study"
+aws.set_credentials("kf_aws-credentials.txt")
 
 bar <- paste(rep("-", 60), collapse ="")
 
@@ -688,7 +689,6 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
       saveRDS(tmp, filename)
       message("Uploading results to AWS...")
       #browser()
-      aws.set_credentials_if_unset("kf_aws-credentials.txt")
       aws.s3::s3saveRDS(tmp, 
                         object = sprintf("%s/%s", aws3_dir, filename),
                         bucket = "longgold.gold-msi.org",
@@ -709,7 +709,6 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
     deco_messagef("%s: Saving all summaries to: '%s'", label, filename)
     saveRDS(simu_data, file = filename) 
     #browser()
-    aws.set_credentials_if_unset("kf_aws-credentials.txt")
     aws.s3::s3saveRDS(simu_data, 
                       object = sprintf("%s/%s", aws3_dir, filename),
                       bucket = "longgold.gold-msi.org",
