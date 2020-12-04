@@ -685,9 +685,9 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
                                      n_simul, 
                                      imp_m,
                                      as.integer(simu_def[r, ]$with_na)))
-      filename <- file.path(out_dir, sprintf("%s_id=%02d.rds", label, simu_def[r,]$id))
+      filename <- file.path(out_dir, sprintf("%s_id=%02d_n=%d.rds", label, simu_def[r,]$id, n_simul))
       saveRDS(tmp, filename)
-      message("Uploading results to AWS...")
+      messagef("Uploading results to AWS...%s", filename)
       #browser()
       aws.s3::s3saveRDS(tmp, 
                         object = sprintf("%s/%s", aws3_dir, filename),
