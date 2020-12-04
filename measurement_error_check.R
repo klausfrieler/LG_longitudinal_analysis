@@ -630,7 +630,7 @@ test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL, 
       deco_messagef("%s: Testing data set #%d/%d", label, n,  n_simul)
       test_all(raw %>% filter(iter == n) %>% select(-iter), m = imp_m) %>% mutate(iter = n)
   })
-  browser()
+  #browser()
   stats <- 
     map_dfr(1:n_simul, function(n){
       #browser()
@@ -671,7 +671,7 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
     params <- sprintf("%s: %s", simu_def[r,] %>% names(), simu_def[r,] %>% as.list()) %>% paste(collapse ="\n")
     deco_messagef("Running %s\n%s", sprintf("%s/%d", label, r), params)
     tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, 
-                            simu_params = simu_def[r, ], label = sprintf("%s/%d", label, r))
+                            simu_params = simu_def[r, ], label = sprintf("%s/param_id=%d", label, simu_def[r,]$id))
     tictoc::toc()
     #browser()
     if(save_data){
