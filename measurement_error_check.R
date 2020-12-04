@@ -7,7 +7,6 @@ level(logger) <- "INFO"
 
 version <- "0.4.0"
 aws3_dir <- "measurement_error_study"
-aws.set_credentials("kf_aws-credentials.txt")
 
 bar <- paste(rep("-", 60), collapse ="")
 
@@ -15,6 +14,7 @@ bar <- paste(rep("-", 60), collapse ="")
 mclustBIC <- mclust::mclustBIC
 
 source("setup.R")
+aws.set_credentials("kf_aws-credentials.txt")
 
 messagef <- function(...){
   message(sprintf(...))
