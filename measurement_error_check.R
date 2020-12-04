@@ -5,7 +5,7 @@ logger <- create.logger()
 logfile(logger) <- "me_simu.log"
 level(logger) <- "INFO"
 
-version <- "0.3.0"
+version <- "0.4.0"
 aws3_dir <- "measurement_error_study"
 
 bar <- paste(rep("-", 40), collapse ="")
@@ -592,6 +592,7 @@ test_all <- function(data, m = 5){
       fit_simex) 
   pool
 }
+
 in_interval <- function(x, low, up){
   any(is.na(c(low, up))) || ((x>= low) && (x <= up))
 }
@@ -609,7 +610,6 @@ get_relative_stats <- function(pool){
            in_ci = in_interval(true_beta, low_ci, up_ci),
            ci_coverage = as.numeric(in_ci)) %>%  
     arrange(term, type) %>% select(term, type, everything())
-  
 }
 
 test_simulations <- function(data, n_simul = 30, imp_m = 5, simu_params = NULL, label = "DEFAULT"){
