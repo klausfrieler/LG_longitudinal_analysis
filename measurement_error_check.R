@@ -171,18 +171,30 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL, var_scale 
                tmp %>% pull(MT.score_mean), 
                tmp %>% pull(MHE.score_mean))
     if(is.null(sigma)){
-      sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
-                     select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
+      sigma <- cov(data %>% 
+                     filter(MHE_class == mhe_class) %>% 
+                     select(BAT.score, 
+                            MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
     }
     else  if(is.character(sigma)) {
       if(sigma == "decor"){
-        sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
-                       select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
+        sigma <- cov(data %>% 
+                       filter(MHE_class == mhe_class) %>% 
+                       select(BAT.score, 
+                              MIQ.score, 
+                              MT.score, 
+                              MHE.score), 
+                     use = "pairwise.complete.obs")
         sigma <- set_off_diag(sigma, off_diag_val = 0)
       }
       else if (sigma == "upcor"){
-        sigma <- cov(data %>% filter(MHE_class == mhe_class) %>% 
-                       select(BAT.score, MIQ.score, MT.score, MHE.score), use = "pairwise.complete.obs")
+        sigma <- cov(data %>% 
+                       filter(MHE_class == mhe_class) %>% 
+                       select(BAT.score, 
+                              MIQ.score, 
+                              MT.score, 
+                              MHE.score), 
+                     use = "pairwise.complete.obs")
         sigma <- mult_diag(sigma, var_scale)
         if(rowSums(sigma)["MHE.score"] != 0){
           cov_test <- sigma %>% cov2cor()
@@ -203,9 +215,12 @@ simulate_with_corr <- function(data, size = nrow(data), sigma = NULL, var_scale 
     else{
       stop("Sigma must be NULL, character or matrix")
     }
-
+    browser()
     n_effective <- round(size * nrow(data %>% filter(MHE_class == mhe_class))/nrow(data)) + 1
-    MASS::mvrnorm(n = n_effective, mu = means, Sigma = sigma, empirical = T) %>% 
+    MASS::mvrnorm(n = n_effective, 
+                  mu = means, 
+                  Sigma = sigma, 
+                  empirical = T) %>% 
       as_tibble() %>% mutate(MHE_class = mhe_class)
   }) %>% `[`(1:size, )
 }
@@ -389,7 +404,9 @@ setup_workspace_me <- function(reload_data = T){
       filter(Reduce(`+`, lapply(., is.na)) != ncol(.) - 2) 
 
     master_cross[is.na(master_cross$MT.score), ]$MT.error <- NA
-    data <- mice::mice(master_cross %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm", printFlag = F) %>% complete(1)
+    #data <- mice::mice(master_cross %>% select(BAT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm", printFlag = F) %>% complete(1)
+    data <- mice::mice(master_cross %>% 
+                         select(BAT.score, RAT.score, MPT.score, MDI.score, EDT.score, MIQ.score, MT.score, MHE.score), m = 1, method ="pmm", printFlag = F) %>% complete(1)
     #browser()
     #data[is.na(data$MHE.score),]$MHE.score <- imp$imp$MHE.score[[1]]
     MHE <- data$MHE.score
@@ -424,6 +441,7 @@ trim_data <- function(data, na.rm = T){
                   all_of(pred_secondary_error), 
                   all_of(pred_tertiary))
 }
+
 add_confint_tidy <- function(lm_fit, level = .95){
   tidy <- broom::tidy(lm_fit)
   cis <- map_dfr(attr(lm_fit$coefficients, "names"), function(x){
@@ -526,13 +544,9 @@ test_overimputation <- function(data, m = 5){
     select(term, estimate, std.error, statistic, p.value, low_ci, up_ci, type)
 }
 
-
-
-
 test_pmm_imputation <- function(data, m = 5){
 
   set.seed(666)
-  
   messagef("***Calculating pmm imputation")
   
   #browser()
@@ -672,7 +686,8 @@ test_all_simulations <- function(data, n_simul, imp_m = 5,
     params <- sprintf("%s: %s", simu_def[r,] %>% names(), simu_def[r,] %>% as.list()) %>% paste(collapse ="\n")
     deco_messagef("Running %s", sprintf("%s/%d", label, r))
     tmp <- test_simulations(data = data, n_simul = n_simul, imp_m = imp_m, 
-                            simu_params = simu_def[r, ], label = sprintf("%s/param_id=%d", label, simu_def[r,]$id))
+                            simu_params = simu_def[r, ], 
+                            label = sprintf("%s/param_id=%d", label, simu_def[r,]$id))
     tictoc::toc()
     #browser()
     if(save_data){

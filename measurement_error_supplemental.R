@@ -158,7 +158,7 @@ pool_boots_lm <- function(lm_model, dep_var  = "RAT.score"){
   
 }
 test_IRT_kf_imputation <- function(data = master_cross, size = 100){
-  f <- as.formula("BAT.score ~ RAT.score + MIQ.score")
+  f <- as.formula("BAT.score ~ MT.score + MIQ.score")
   raw_lm <- lm(f, data = data) %>% broom::tidy()
   #browser()
   brat_wrapper <- function(data){
@@ -167,7 +167,7 @@ test_IRT_kf_imputation <- function(data = master_cross, size = 100){
   }
   lm_brat_pred <- bootstrapper(data, 
                                FUN = brat_wrapper, 
-                               vars = c("RAT"), 
+                               vars = c("MT"), 
                                size = size)
   
   brat_pred <- pool_boots_lm(lm_brat_pred) %>% mutate(model = "kf_impute_pred")
@@ -181,7 +181,7 @@ test_IRT_kf_imputation <- function(data = master_cross, size = 100){
   
   lm_brat <- bootstrapper(data, 
                           FUN = brat_wrapper, 
-                          vars = c("BAT", "RAT"), 
+                          vars = c("BAT", "MT"), 
                           size = size)
   
   brat_pred_dep <- pool_boots_lm(lm_brat) %>% mutate(model = "kf_impute_pred_dep")

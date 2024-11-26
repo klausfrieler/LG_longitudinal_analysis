@@ -112,12 +112,14 @@ run_simulations <- function(opt){
   test_all_simulations(master_cross, n_simul = opt$n, simu_def = simu_defs, label = label, out_dir = opt$outdir)
 }
 #screen -S simu1 
-#Rscript --vanilla run_simulations.R  -n 30 -f "size = 250" -l simu_250
-#screen -S simu1 
-#Rscript --vanilla run_simulations.R  -n 30 -f "size = 500" -l simu_500
-#screen -S simu1 
-#Rscript --vanilla run_simulations.R  -n 30 -f "size = 1000" -l simu_1000
-#screen -S simu1 
-#Rscript --vanilla run_simulations.R  -n 30 -f "size = 2000" -l simu_2000
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 250" -l simu_250 -o simulations
+#screen -S simu2 
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 500" -l simu_500 -o simulations
+#screen -S simu1  
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 1000" -l simu_1000 -o simulations
+#screen -S simu2
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 2000" -l simu_2000 -o simulations
+#screen -S simu3
+#Rscript --vanilla run_simulations.R  -n 30 -f "size = 4000" -l simu_4000 -o simulations
 
 run_simulations(opt)
